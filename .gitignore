@@ -14,6 +14,15 @@ results/
 # API 응답 캐시 (실행하면 다시 생긴다)
 data/후보_캐시.csv
 
+# 앱 실행 기록 DB. 사용자가 입력한 물품설명 원문이 들어 있다.
+# 저장소가 공개이므로 한 번 푸시되면 히스토리에서 지우기 어렵다 —
+# 코드보다 이 줄을 먼저 넣었다.
+data/*.db
+data/*.db-journal
+
+# 일일 호출 카운터
+.usage_daily.json
+
 # 관세청 HS부호 원본 XLSX. 공공데이터포털에서 다시 받을 수 있고,
 # 커밋하는 건 여기서 만든 data/hsk_codes.csv 쪽이다.
 data/관세청_HS부호*.xlsx
