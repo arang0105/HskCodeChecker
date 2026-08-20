@@ -1,9 +1,15 @@
-google-generativeai
-numpy
-pandas
-openpyxl
-streamlit
-python-dotenv
+# 버전을 고정한다. Streamlit Community Cloud 는 배포할 때마다 최신본을 새로 받으므로,
+# 고정하지 않으면 로컬에서 되던 앱이 배포에서만 깨진다.
+# google-generativeai 는 지원이 종료된 패키지라(import 시 FutureWarning) 특히 그렇다.
+# 옮기지 않는 이유 — llm.ask() 의 thinking 토큰 역산이 usage_metadata 필드명에
+# 묶여 있어, SDK 를 바꾸면 지금까지의 토큰·비용 기록과 연속성이 끊긴다.
+google-generativeai==0.8.6
+numpy==2.4.6
+pandas==3.0.5
+openpyxl==3.1.5
+streamlit==1.61.1
+python-dotenv==1.2.3
 
 # 결정례 수집용. CLIP이 JSON을 돌려주므로 HTML 파서는 필요 없다.
-requests
+# 배포에는 필요 없지만 지우면 collect.py 가 안 돈다.
+requests==2.34.2
