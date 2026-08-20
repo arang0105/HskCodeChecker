@@ -20,7 +20,7 @@ from src import config, evaluate, hsk, llm, search
 # 재정렬 프롬프트를 고쳐가며 실험할 때, [1]단계는 매번 똑같은 것을 다시 사는 셈이다.
 # 캐시하면 실험 1회 비용이 절반이 되고, [1]이 고정되므로 재정렬 효과만 깨끗하게 남는다.
 CACHE_CSV = config.DATA_DIR / "후보_캐시.csv"
-CACHE_FIELDS = ["key", "모델", "생성시각", "후보json", "in_tokens", "billed_out",
+CACHE_FIELDS = ["key", "모델", "온도", "생성시각", "후보json", "in_tokens", "billed_out",
                 "elapsed", "입력앞60"]
 
 # 결정례 원문은 길다(물품설명 최대 3,137자, 결정사유 최대 2,505자).
@@ -28,6 +28,75 @@ CACHE_FIELDS = ["key", "모델", "생성시각", "후보json", "in_tokens", "bil
 # 정작 봐야 할 물품설명이 긴 인용문에 묻힌다. 그래서 잘라서 넣는다.
 DESC_CUT = 400
 REASON_CUT = 600
+
+
+GATE_PROMPT = """당신은 관세 품목분류 전문가입니다.
+
+아래 입력을 보고 **HS 품목분류를 시도할 수 있는지**만 판단하세요. 분류하지는 마세요.
+
+[입력]
+{desc}
+
+판단 기준 — 이것 하나만 봅니다.
+**입력만 읽고 이 물품이 무엇인지 특정할 수 있는가?**
+
+- 특정할 수 있으면 "충분"입니다. 재질·용도 같은 세부 정보가 더 있으면 좋겠다는
+  이유로 불충분이라고 하지 마세요. **거의 모든 물품이 그렇습니다.** 그런 항목은
+  분류한 뒤에 사람이 확인할 사항으로 넘기면 됩니다.
+- 품번·모델명·상표명·약어뿐이어서 **물품의 정체를 짐작조차 할 수 없을 때만**
+  "불충분"입니다.
+
+예시
+- "AX-2200" → 불충분 (기호뿐이라 무엇인지 알 수 없다)
+- "부품 A형; SKU 88213; CN" → 불충분 (품번 위주, 정체 불명)
+- "스테인리스 보온병" → 충분
+- "벽걸이 에어컨 (모델 SW07BAKWAS)" → 충분 (모델명이 있어도 물품은 특정된다)
+- "면 티셔츠" → 충분 (편물인지 여부는 분류 뒤에 확인할 사항이다)
+
+반드시 다음 JSON 형식으로만 답하세요.
+{{
+  "충분": true 또는 false,
+  "부족항목": ["재질", "용도"],
+  "질문": ["사용자에게 물어볼 한 문장", "..."]
+}}
+충분하면 부족항목과 질문은 빈 배열 [] 로 두세요."""
+
+
+def gate(desc, model=None, temperature=1.0):
+    """[0] 분류에 착수하기 전에 정보가 충분한지만 판단한다.
+
+    baseline 에서 가장 뼈아픈 발견이 **정보부족 인지율 3.6%**(28건 중 1건)였다.
+    품번만 던져도 모델은 되묻지 않고 확신에 차서 코드를 찍는다.
+    그리고 조건 A(상세 설명)와 조건 B(품명 원문) 사이에 정확도 차이가
+    관측되지 않았으므로, 이 단계의 목적은 **정확도가 아니라 안전성**이다.
+    (CLAUDE.md "조건 A vs 조건 B" 참조)
+
+    돌려주는 dict 는 llm.ask_json() 결과에 다음을 더한 것이다.
+      충분     : True 면 분류를 진행해도 된다
+      부족항목 : 무엇이 비었는가
+      질문     : 사용자에게 되물을 문장
+
+    **파싱에 실패하면 충분=True 로 둔다(fail-open).** 게이트가 깨졌다고
+    분류까지 막으면 도구가 아무 답도 못 하는 상태가 된다. 게이트는 안전장치이지
+    관문이 아니다. 대신 parse_error 가 남으므로 집계에서 드러난다.
+    """
+    prompt = GATE_PROMPT.format(desc=desc)
+    result = llm.ask_json(prompt, model=model, temperature=temperature)
+    result["prompt"] = prompt
+
+    data = result["data"]
+    if not data:
+        result["충분"] = True
+        result["부족항목"] = []
+        result["질문"] = []
+        return result
+
+    # .get(키, 기본값) 은 키가 없어도 터지지 않는다. 모델이 키를 빠뜨릴 수 있으므로
+    # dict[키] 대신 이걸 쓴다. Java 의 map.getOrDefault 와 같다.
+    result["충분"] = bool(data.get("충분", True))
+    result["부족항목"] = data.get("부족항목", []) or []
+    result["질문"] = data.get("질문", []) or []
+    return result
 
 
 RERANK_PROMPT = """당신은 관세 품목분류 전문가입니다.
@@ -62,18 +131,23 @@ RERANK_PROMPT = """당신은 관세 품목분류 전문가입니다.
 }}"""
 
 
-def _cache_key(desc, model):
-    """모델 · 프롬프트 · 입력이 모두 같을 때만 같은 키가 나오게 만든다.
+def _cache_key(desc, model, temperature):
+    """모델 · 프롬프트 · 온도 · 입력이 모두 같을 때만 같은 키가 나오게 만든다.
 
     셋을 이어붙인 문자열을 해시(sha256)한다. 해시는 내용이 1글자만 달라도
     전혀 다른 값이 나오는 함수다. Java의 hashCode 와 쓰임새는 같지만
     충돌 가능성이 사실상 없다는 점이 다르다.
 
-    **프롬프트를 키에 넣는 게 핵심이다.** 프롬프트를 고치면 키가 저절로
-    달라져 캐시가 무효가 된다. 이게 없으면 옛 프롬프트로 만든 후보를
-    새 프롬프트의 결과인 양 쓰게 되고, 그 순간 측정이 거짓말이 된다.
+    **프롬프트와 온도를 키에 넣는 게 핵심이다.** 둘 중 하나만 고쳐도 키가
+    저절로 달라져 캐시가 무효가 된다. 이게 없으면 옛 조건으로 만든 후보를
+    새 조건의 결과인 양 쓰게 되고, 그 순간 측정이 거짓말이 된다.
+
+    온도는 2026-08-20에 키에 넣었다. 그전까지 [1]단계는 llm.ask_json 기본값
+    1.0으로만 돌았고 온도를 받을 방법 자체가 없었다. 그대로 온도만 낮춰
+    재측정했다면 [3][4]만 낮은 온도로 돌고 [1]은 1.0짜리 후보가 캐시에서
+    나왔을 것이다.
     """
-    재료 = f"{model}\n{llm.CANDIDATE_PROMPT}\n{desc}"
+    재료 = f"{model}\n{temperature}\n{llm.CANDIDATE_PROMPT}\n{desc}"
     # encode("utf-8") : 해시 함수는 글자가 아니라 바이트를 먹는다
     return hashlib.sha256(재료.encode("utf-8")).hexdigest()[:16]
 
@@ -96,7 +170,8 @@ def _append_cache(row):
         writer.writerow(row)
 
 
-def generate_candidates(desc, model=None, use_cache=True, cache=None):
+def generate_candidates(desc, model=None, use_cache=True, cache=None,
+                        temperature=1.0):
     """[1] 후보 3개를 만든다. 같은 조건이면 캐시에서 꺼낸다.
 
     use_cache : False 면 캐시를 **읽지도 쓰지도** 않는다. 매번 새로 부른다.
@@ -108,7 +183,7 @@ def generate_candidates(desc, model=None, use_cache=True, cache=None):
     그때 토큰과 시간은 실제로 0이다.
     """
     model_name = model or config.MODEL_DEV
-    key = _cache_key(desc, model_name)
+    key = _cache_key(desc, model_name, temperature)
 
     # cache is not None 으로 검사하는 이유 — 빈 dict {} 는 거짓으로 취급되므로
     # if cache: 라고 쓰면 "캐시가 비었다"와 "캐시를 안 넘겼다"를 구분하지 못한다.
@@ -123,7 +198,8 @@ def generate_candidates(desc, model=None, use_cache=True, cache=None):
             "parse_error": None,
         }
 
-    result = llm.ask_json(llm.CANDIDATE_PROMPT.format(desc=desc), model=model_name)
+    result = llm.ask_json(llm.CANDIDATE_PROMPT.format(desc=desc), model=model_name,
+                          temperature=temperature)
     candidates = result["data"]["candidates"] if result["data"] else []
 
     # 저장하지 않는 경우가 둘 있다.
@@ -137,6 +213,7 @@ def generate_candidates(desc, model=None, use_cache=True, cache=None):
         row = {
             "key": key,
             "모델": model_name,
+            "온도": temperature,
             "생성시각": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             # ensure_ascii=False : 한글을 \uXXXX 로 바꾸지 않고 그대로 저장
             "후보json": json.dumps(candidates, ensure_ascii=False),
@@ -171,12 +248,19 @@ def _format_candidates(candidates):
     return "\n".join(lines)
 
 
-def _format_cases(hits):
+def _format_cases(hits, reason_cut=None):
     """검색된 결정례를 프롬프트에 넣을 문자열로 만든다.
 
     유사도 점수를 함께 보여 준다. 모델이 '이건 좀 먼 사례구나'를
     판단할 근거가 되기 때문이다.
+
+    reason_cut 은 결정사유를 몇 글자까지 넣을지다. None 이면 모듈 기본값
+    REASON_CUT(600). 0 을 주면 결정사유를 통째로 뺀다 — 기여도를 재기 위한
+    ablation(한 부분만 빼고 같은 실험을 다시 돌려 그 부분의 몫을 보는 방법)용이다.
+    상수를 직접 고치지 않고 인자로 받는 이유는, 같은 실행 안에서 두 조건을
+    비교해야 모델의 실행 간 변동이 섞이지 않기 때문이다.
     """
+    cut = REASON_CUT if reason_cut is None else reason_cut
     if not hits:
         return "(유사한 결정례를 찾지 못했습니다)"
 
@@ -186,13 +270,14 @@ def _format_cases(hits):
             f"({rank}) 유사도 {h['score']:.3f} | 참조번호 {h['참조번호']} | "
             f"결정세번 {h['결정세번']}\n"
             f"    품명: {h['품명']}\n"
-            f"    물품설명: {h['물품설명'][:DESC_CUT]}\n"
-            f"    결정사유: {h['결정사유'][:REASON_CUT]}"
+            f"    물품설명: {h['물품설명'][:DESC_CUT]}"
+            + (f"\n    결정사유: {h['결정사유'][:cut]}" if cut else "")
         )
     return "\n\n".join(blocks)
 
 
-def rerank(desc, candidates, hits, model=None, temperature=1.0):
+def rerank(desc, candidates, hits, model=None, temperature=1.0,
+           reason_cut=None):
     """1차 후보 3개를 결정례를 근거로 재정렬한다.
 
     desc       : 물품설명 (평가셋 조건 A 입력)
@@ -209,7 +294,7 @@ def rerank(desc, candidates, hits, model=None, temperature=1.0):
     prompt = RERANK_PROMPT.format(
         desc=desc,
         candidates=_format_candidates(candidates),
-        cases=_format_cases(hits),
+        cases=_format_cases(hits, reason_cut=reason_cut),
     )
 
     result = llm.ask_json(prompt, model=model, temperature=temperature)
