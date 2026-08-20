@@ -1,0 +1,9 @@
+google-generativeai
+numpy
+pandas
+openpyxl
+streamlit
+python-dotenv
+
+# 결정례 수집용. CLIP이 JSON을 돌려주므로 HTML 파서는 필요 없다.
+requests

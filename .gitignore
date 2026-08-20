@@ -1,0 +1,31 @@
+# 절대 커밋 금지
+.env
+
+# 가상환경 / 캐시
+.venv/
+venv/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+
+# 실행 결과 (용량과 응답 원문 때문에 제외. 요약은 EXPERIMENTS.md 에 남긴다)
+results/
+
+# API 응답 캐시 (실행하면 다시 생긴다)
+data/후보_캐시.csv
+
+# 관세청 HS부호 원본 XLSX. 공공데이터포털에서 다시 받을 수 있고,
+# 커밋하는 건 여기서 만든 data/hsk_codes.csv 쪽이다.
+data/관세청_HS부호*.xlsx
+
+# 수집 중간 산출물 (data/결정례.csv 로 정제된 뒤에는 쓰지 않는다)
+data/결정례_raw.csv
+
+# 쓰지 않는 차원의 임베딩. 검색은 768차원만 쓴다 (search.py DIM)
+data/embeddings_3072.npy
+data/embeddings_1536.npy
+
+# 개인 학습 노트 / 백업
+메모.txt
+파이썬정리.md
+*.bak
