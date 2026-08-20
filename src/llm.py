@@ -98,12 +98,29 @@ def ask_json(prompt, model=None, temperature=1.0):
 
     # try/except 는 Java의 try/catch 와 같다. 'as e' 가 catch 변수명.
     try:
-        result["data"] = json.loads(result["text"])
-        result["parse_error"] = None
+        data = json.loads(result["text"])
     except json.JSONDecodeError as e:
         result["data"] = None
         result["parse_error"] = str(e)
+        return result
 
+    # JSON 문법이 맞아도 dict 가 아닐 수 있다. 모델이 요청한 객체 대신
+    # 배열 [{...}] 을 돌려주는 일이 실제로 있었다(2026-08-20, [4] 세번 확정).
+    #
+    # 부르는 쪽은 전부 data.get(...) 을 쓴다. 빈 값 검사(if not data)는
+    # 원소가 있는 리스트를 통과시키므로 그다음 .get() 에서 AttributeError 가 나고
+    # **29건 배치가 통째로 죽는다.** 여기서 파싱 실패로 바꿔 두면 부르는 쪽의
+    # 기존 실패 처리 경로를 그대로 타고, 집계의 '파싱실패'에도 잡힌다.
+    #
+    # 배열을 벗겨서 살려주지 않는 이유 — 모델이 형식을 어긴 것은 측정 대상이다.
+    # 조용히 고쳐 주면 그 사실이 숫자에서 사라진다.
+    if not isinstance(data, dict):
+        result["data"] = None
+        result["parse_error"] = "JSON 최상위가 dict 가 아님: %s" % type(data).__name__
+        return result
+
+    result["data"] = data
+    result["parse_error"] = None
     return result
 
 
