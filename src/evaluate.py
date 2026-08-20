@@ -7,6 +7,7 @@
 아직 API는 부르지 않는다. 이 단계는 비용 0원이다.
 """
 
+import csv
 import json
 from datetime import datetime
 
@@ -81,30 +82,56 @@ def load_cases(condition="A"):
     return cases
 
 
-def load_testset():
-    """홀드아웃 테스트셋 30건을 load_cases() 와 같은 형식으로 읽는다.
+def _load_csv_cases(path, prefix):
+    """결정례 CSV 를 load_cases() 와 같은 형식으로 읽는다.
 
-    **열람 규칙** (CLAUDE.md) — 5주차 종료 시 1회, 6주차 종료 시 1회, 총 2회뿐.
-    이 함수를 부르는 것 자체가 그 횟수를 쓰는 일이다. 부르기 전에 개발셋에서
-    할 수 있는 일이 남아 있지 않은지 먼저 확인할 것.
+    테스트셋과 회귀셋이 같은 형식이라 읽는 코드도 같다. 한 벌만 둔다.
 
-    번호를 'T1' 처럼 붙이는 이유 — baseline 케이스 번호가 1~30이라
-    그대로 두면 diff_baseline() 이 **엉뚱한 건끼리 대조한다.** 겹치지 않는
-    이름을 주면 baseline 에 없는 번호로 인식돼 대조에서 조용히 빠진다.
+    prefix : 번호 앞에 붙일 글자. baseline 케이스 번호가 1~30 이라 그대로 두면
+             diff_baseline() 이 **엉뚱한 건끼리 대조한다.** 겹치지 않는 이름을
+             주면 baseline 에 없는 번호로 인식돼 대조에서 조용히 빠진다.
     """
-    df = pd.read_csv(config.DATA_DIR / "테스트셋.csv", dtype=str).fillna("")
+    df = pd.read_csv(path, dtype=str).fillna("")
 
     cases = []
     for i, (_, row) in enumerate(df.iterrows(), start=1):
         cases.append({
-            "no": f"T{i}",
+            "no": f"{prefix}{i}",
             "결정례번호": row["참조번호"],
             "입력": row["물품설명"],
             "정답": normalize_code(row["결정세번_정규화"]),
-            # 테스트셋에는 품명유형 분류가 없다. 되묻기 지표는 평가셋에서만 잰다.
+            # 이 CSV 들에는 품명유형 분류가 없다. 되묻기 지표는 평가셋에서만 잰다.
             "품명유형": "",
         })
     return cases
+
+
+def load_testset():
+    """홀드아웃 테스트셋 30건 (T1~T30).
+
+    **열람 규칙** (CLAUDE.md) — 5주차 종료 시 1회, 6주차 종료 시 1회, 총 2회뿐.
+    이 함수를 부르는 것 자체가 그 횟수를 쓰는 일이다. 부르기 전에 개발셋에서
+    할 수 있는 일이 남아 있지 않은지 먼저 확인할 것.
+    2026-08-19 에 1회 소비했다. **남은 열람은 1회다.**
+    """
+    return _load_csv_cases(config.DATA_DIR / "테스트셋.csv", "T")
+
+
+def load_regression():
+    """회귀 세트 20건 (R1~R20).
+
+    품목분류사례(일반 사전심사)에서 뽑은, 상대적으로 **쉬운** 건들이다.
+    빈도 가중 10건(실제 품목 분포 반영) + 류 층화 10건(다양성)으로 뽑았고
+    시드를 고정했다. `data/결정례.csv` 의 `회귀셋` 열이 Y 인 행과 같다.
+
+    **이 세트에서 보는 숫자는 정확도가 아니라 강등 건수다.** 목표는 점수를
+    올리는 게 아니라 [3]재정렬이 원래 맞던 쉬운 건을 틀리게 만들지 않는 것이다.
+    홀드아웃 30건이 전부 협의회(분류가 갈려 논의에 올라간 어려운 건)라
+    쉬운 쪽이 깨지는지는 지금까지 아무도 재지 않았다.
+
+    열람 횟수 제한이 없다. 홀드아웃과 달리 목표 판정에 쓰지 않기 때문이다.
+    """
+    return _load_csv_cases(config.DATA_DIR / "회귀셋.csv", "R")
 
 
 def grade(candidates, answer):
@@ -155,23 +182,56 @@ def load_baseline():
     """baseline 측정기록에서 건별 O/X를 읽어 {번호: {...}} 로 돌려준다.
 
     '측정기록' 시트는 조건 A 결과다. 유효_A 가 O 인 29건만 담는다.
-    엑셀에는 1/0 으로 기록돼 있어 True/False 로 바꾼다.
+
+    **엑셀이 계산해 둔 O/X 플래그(14·15열)를 그대로 믿지 않고 후보열에서
+    다시 계산한다.** 29번 행의 '정답 HSK' 셀에 값이 아니라 수식 문자열
+    (=IF(케이스목록!$D33...))이 남아 있어서, 그 행의 플래그 5개가 전부 0으로
+    굳어 있었기 때문이다. 실제로는 후보1 `1602.32-1000` 이 정답 `1602329000` 의
+    6자리와 같다 — 같은 행의 오답유형 태그도 "한국 고유 세번(10자리) 오류"라
+    6자리는 맞았다고 스스로 말하고 있다.
+    (2026-08-20 발견. 원본 xlsx 는 고치지 않는다. EXPERIMENTS.md 정정 항목 참조)
+
+    정답도 이 시트가 아니라 load_cases("A") 가 읽는 '케이스목록' 시트에서
+    가져온다. 같은 값이 두 곳에 있으면 계산식이 아닌 쪽을 원본으로 삼는다.
     """
     df = pd.read_excel(
         config.BASELINE_XLSX, sheet_name="측정기록", header=None, dtype=str
     )
 
+    # {키: 값 for ...} 는 dict comprehension 이다. list comprehension 과 문법은
+    # 같고 결과가 dict 라는 점만 다르다. 번호로 정답을 찾는 표를 만든다.
+    정답표 = {str(c["no"]): c["정답"] for c in load_cases("A")}
+
     baseline = {}
+    불일치 = []
     for _, row in df.iloc[4:].iterrows():
         if row[4] != "O":  # 유효_A
             continue
-        baseline[row[0]] = {
-            "정답": normalize_code(row[3]),
-            "top1_6": row[14] == "1",
-            "top3_6": row[15] == "1",
-            "후보": [normalize_code(row[c]) for c in (11, 12, 13)],
+
+        no = str(row[0])
+        정답 = 정답표.get(no, normalize_code(row[3]))
+        후보 = [normalize_code(row[c]) for c in (11, 12, 13)]
+
+        top1_6 = 후보[0][:6] == 정답[:6]
+        top3_6 = any(c[:6] == 정답[:6] for c in 후보)
+
+        # 엑셀 플래그와 다른 행은 모아 뒀다가 한 번에 알린다. 조용히 넘어가면
+        # 다른 행이 같은 이유로 깨져도 알아차릴 수 없다.
+        if (top1_6, top3_6) != (row[14] == "1", row[15] == "1"):
+            불일치.append(no)
+
+        baseline[no] = {
+            "정답": 정답,
+            "top1_6": top1_6,
+            "top3_6": top3_6,
+            "후보": 후보,
             "오답유형": row[16],
         }
+
+    if 불일치:
+        print(f"  ! 엑셀 플래그와 재계산이 다른 행: {불일치}"
+              f" — 후보열 기준으로 채점한다 (알려진 건: 29)")
+
     return baseline
 
 
@@ -329,8 +389,48 @@ def _final_summary(rows):
     }
 
 
+# detail.csv 를 다시 읽어 들일 때 형을 되돌릴 열 목록.
+# CSV 는 모든 값을 문자열로 준다. 그대로 집계하면 조용히 틀린다 —
+# 파이썬에서 문자열 "False" 는 **참**이므로 sum(1 for r in rows if r["top1_6"]) 이
+# 오답까지 세어 버린다. 이어받기를 넣으면서 실제로 밟을 뻔한 함정이다.
+_BOOL_COLS = ("후보캐시", "검색적중", "before_top1_6", "before_top3_6",
+              "top1_4", "top1_6", "top3_6", "b_top1_6", "자동확정", "top1_10")
+_NUM_COLS = {"선택지수": int, "elapsed": float, "in_tokens": int,
+             "billed_out": int, "검색점수최대": float}
+
+
+def _restore_row(row):
+    """detail.csv 에서 읽은 행을 run_rerank_batch 가 만든 것과 같은 형으로 되돌린다."""
+    r = dict(row)
+    for c in _BOOL_COLS:
+        r[c] = str(r.get(c, "")).strip() == "True"
+    for c, cast in _NUM_COLS.items():
+        try:
+            r[c] = cast(r.get(c) or 0)
+        except (TypeError, ValueError):
+            r[c] = cast(0)
+    return r
+
+
+def _append_detail(outdir, row):
+    """건별로 detail.csv 에 한 줄 덧붙인다.
+
+    배치가 중간에 죽어도 거기까지는 남는다. 2026-08-20 에 pro 일일 쿼터(250)로
+    29건 배치가 16건에서 끊겼을 때, 이미 산 16건분(약 in 72,000 / out 85,000)이
+    기록 없이 통째로 사라졌다. 그 사고를 막는 것이 이 함수의 존재 이유다.
+    """
+    path = outdir / "detail.csv"
+    is_new = not path.exists()
+    with open(path, "a", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if is_new:
+            w.writeheader()
+        w.writerow(row)
+
+
 def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
-                     use_cache=True, with_final=True, cases=None):
+                     use_cache=True, with_final=True, cases=None,
+                     temperature=1.0, resume=None, reason_cut=None):
     """[1]후보 → [2]검색 → [3]재정렬 → [4]세번확정 전체를 돌려 채점한다.
 
     run_batch() 와 나란히 두는 이유 — 저쪽은 [1]단계만 재는 함수이고
@@ -369,14 +469,42 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
     # 10자리 사전(11,327행)도 한 번만 읽는다.
     hsk_table = hsk.load_hsk() if with_final else None
 
+    # 결과 폴더를 **시작할 때** 만든다. 끝에서 만들면 도중에 죽었을 때
+    # 이미 산 응답이 통째로 사라진다.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    outdir = config.RESULTS_DIR / stamp
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # resume 에 이전 실행 시각(예: "20260820_111529")을 주면 그 실행에서 끝난
+    # 건은 다시 사지 않는다. 쿼터에 걸려 끊겼을 때 쓴다.
+    # **같은 조건에서 나온 것만 넣을 것** — 모델이나 온도가 다른 실행을 섞으면
+    # 한 표 안에 서로 다른 조건의 결과가 들어간다.
+    이전 = {}
+    if resume:
+        prev = pd.read_csv(config.RESULTS_DIR / resume / "detail.csv",
+                           dtype=str).fillna("")
+        이전 = {str(r["no"]): _restore_row(r) for _, r in prev.iterrows()}
+        print(f"  이어받기: {resume} 에서 {len(이전)}건 재사용")
+
     rows = []
     for i, case in enumerate(cases, start=1):
         desc = case["입력"]
         ans6 = case["정답"][:6]
+        번호 = str(case["no"])
+
+        재사용 = 이전.get(번호)
+        if 재사용 is not None:
+            rows.append(재사용)
+            _append_detail(outdir, 재사용)
+            print(f"  [{i}/{len(cases)}] no={번호:>3} [이어받음]")
+            continue
 
         # --- [1] 후보 생성 (같은 조건이면 캐시에서 꺼낸다) ---
+        # 온도를 세 단계에 모두 같은 값으로 넘긴다. 한 단계만 낮추면
+        # 무엇이 달라졌는지 말할 수 없다.
         first = pipeline.generate_candidates(
-            desc, model=model_name, use_cache=use_cache, cache=cache
+            desc, model=model_name, use_cache=use_cache, cache=cache,
+            temperature=temperature,
         )
         candidates = first["candidates"]
         codes_before = [c["code"] for c in candidates]
@@ -385,10 +513,22 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
         hits = search.search(desc, top_k=top_k, index=index)
         hit6 = [h["결정세번"][:6] for h in hits]
 
+        # 유사도 점수를 함께 남긴다. 검색이 실패한 건에서 "근거가 애초에 약했나"와
+        # "근거는 좋았는데 [3]이 못 뒤집었나"를 나중에 가르려면 점수가 있어야 한다.
+        # 지금까지 detail.csv 에는 결정세번만 남아 있어 이 구분이 불가능했다.
+        #
+        # next(제너레이터, 기본값) 은 조건에 맞는 첫 원소 하나만 꺼내는 관용구다.
+        # Java 의 stream().filter(...).findFirst().orElse(null) 에 해당한다.
+        # 전부 훑지 않고 첫 개를 찾는 즉시 멈춘다.
+        점수최대 = hits[0]["score"] if hits else 0.0
+        정답점수 = next((h["score"] for h in hits if h["결정세번"][:6] == ans6), None)
+
         # --- [3] 재정렬 ---
         # 후보가 없으면 재정렬할 게 없다. API를 낭비하지 않는다.
         if candidates:
-            third = pipeline.rerank(desc, candidates, hits, model=model_name)
+            third = pipeline.rerank(desc, candidates, hits, model=model_name,
+                                    temperature=temperature,
+                                    reason_cut=reason_cut)
         else:
             third = {"codes": [], "위반": "1차 후보 없음", "data": None,
                      "elapsed": 0, "in_tokens": 0, "billed_out": 0,
@@ -407,7 +547,7 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
         # 오답이지만, 실제 파이프라인이 그렇게 동작하므로 그대로 잰다.
         if with_final and codes_a:
             fourth = pipeline.finalize(desc, codes_a[0], table=hsk_table,
-                                       model=model_name)
+                                       model=model_name, temperature=temperature)
         else:
             fourth = {"code": "", "선택지수": 0, "auto": True, "위반": "",
                       "elapsed": 0, "in_tokens": 0, "billed_out": 0,
@@ -415,7 +555,7 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
 
         top1_10 = bool(fourth["code"]) and fourth["code"] == normalize_code(case["정답"])
 
-        rows.append({
+        row = {
             "no": case["no"],
             "결정례번호": case["결정례번호"],
             "품명유형": case["품명유형"],
@@ -427,6 +567,10 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
             # 검색이 정답을 물어왔는지. 재정렬이 실패했을 때
             # 원인이 검색인지 판단인지 가르는 열이다.
             "검색적중": ans6 in hit6,
+            "검색점수최대": round(점수최대, 4),
+            # 정답을 못 물어온 건은 빈칸이다. 0 으로 채우면 "점수가 0인 사례"와
+            # "사례가 아예 없음"이 섞여 평균이 거짓말을 한다.
+            "정답결정례점수": round(정답점수, 4) if 정답점수 is not None else "",
             "재정렬": " | ".join(codes_a),
             "위반": third["위반"] or "",
             "확신도": (third["data"] or {}).get("confidence", ""),
@@ -450,7 +594,9 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
             "parse_error": third["parse_error"] or fourth["parse_error"],
             "raw": third["text"],
             "raw_확정": fourth["text"],
-        })
+        }
+        rows.append(row)
+        _append_detail(outdir, row)   # 여기서 죽어도 이 건까지는 남는다
 
         # 화살표로 재정렬이 무엇을 바꿨는지 한눈에 본다.
         mark_b = "O" if g_before["top1_6"] else "X"
@@ -467,13 +613,7 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
                   f"(선택지 {fourth['선택지수']}개"
                   f"{', 자동' if fourth['auto'] else ''}) {fourth['위반'] or ''}")
 
-    # --- 저장 ---
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    outdir = config.RESULTS_DIR / stamp
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    df = pd.DataFrame(rows)
-    df.to_csv(outdir / "detail.csv", index=False, encoding="utf-8-sig")
+    # --- 저장 --- detail.csv 는 이미 건별로 쌓였다. 여기서는 요약만 남긴다.
 
     # 프롬프트 두 개를 모두 남긴다. 한쪽만 남기면 재현이 안 된다.
     # f""" ... """ 는 여러 줄 f-string. 줄바꿈을 그대로 쓸 수 있어
@@ -493,15 +633,20 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
     total = len(rows)
 
     def pct(key):
-        """열 하나의 True 비율을 '41.4% (12/29)' 형태로 만든다."""
+        """열 하나의 True 비율을 '44.8% (13/29)' 형태로 만든다."""
         hit = sum(1 for r in rows if r[key])
         return f"{hit / total * 100:.1f}% ({hit}/{total})"
+
+    승격 = [r["no"] for r in rows if not r["before_top1_6"] and r["top1_6"]]
+    강등 = [r["no"] for r in rows if r["before_top1_6"] and not r["top1_6"]]
 
     meta = {
         "실행시각": stamp,
         "조건": condition,
         "모델": model_name,
+        "온도": temperature,
         "top_k": top_k,
+        "결정사유컷": pipeline.REASON_CUT if reason_cut is None else reason_cut,
         "메모": note,
         "건수": total,
         "before_top1_6": pct("before_top1_6"),
@@ -510,6 +655,10 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
         "after_A_top1_4": pct("top1_4"),
         "after_A_top3_6": pct("top3_6"),
         "after_B_top1_6": pct("b_top1_6"),
+        # [3]이 무엇을 바꿨는지. 회귀 세트에서는 이 '강등'이 유일한 판정 지표다 —
+        # 목표는 정확도를 올리는 게 아니라 맞던 걸 틀리게 만들지 않는 것이다.
+        "승격": f"{len(승격)}건 {승격}",
+        "강등": f"{len(강등)}건 {강등}",
         "검색적중률": pct("검색적중"),
         "위반건수": sum(1 for r in rows if r["위반"]),
         # ** 는 dict 를 펼쳐 넣는 문법이다. [4]를 안 돌렸으면 빈 dict 를 펼쳐
@@ -531,6 +680,106 @@ def run_rerank_batch(condition="A", model=None, top_k=5, limit=None, note="",
         print(f"  {k}: {v}")
 
     diff_baseline(rows)
+    print()
+    print(f"  저장: {outdir}")
+    return meta
+
+
+def run_gate_batch(condition="B", model=None, cases=None, limit=None, note=""):
+    """[0] 되묻기 게이트를 돌려 **양방향으로** 집계한다.
+
+    조건 B(품명 원문) 28건이 본무대다. CLAUDE.md 채점 규칙 그대로 —
+      품번only 7건에서 되물으면 **+** (목표 70%)
+      품명명확 21건에서 되물으면 **−** (오작동. 배포하면 아무 답도 못 하게 된다)
+    한쪽만 재면 "전부 되묻기"라는 값싼 전략이 만점을 받는다. 그래서 둘 다 센다.
+
+    cases 를 직접 넘기면 그걸 쓴다. 조건 A 29건이나 회귀셋 20건에 돌려
+    '상세 설명인데도 되묻는가'를 재는 용도다.
+
+    run_rerank_batch() 와 합치지 않는 이유 — 게이트를 파이프라인 앞에 끼우면
+    6자리 정확도에 게이트가 섞여 지금까지의 before/after 분해가 무너진다.
+    게이트는 app.py 에서만 앞단에 붙이고, 측정은 여기서 따로 한다.
+    """
+    from src import pipeline
+
+    if cases is None:
+        cases = load_cases(condition)
+    if limit:
+        cases = cases[:limit]
+
+    model_name = model or config.MODEL_DEV
+    rows = []
+
+    for i, case in enumerate(cases, start=1):
+        g = pipeline.gate(case["입력"], model=model_name)
+        되묻기 = not g["충분"]
+
+        rows.append({
+            "no": case["no"],
+            "품명유형": case["품명유형"],
+            "입력": case["입력"][:80],
+            "되묻기": 되묻기,
+            "부족항목": " | ".join(g["부족항목"]),
+            "질문수": len(g["질문"]),
+            "질문": " | ".join(g["질문"]),
+            "elapsed": round(g["elapsed"], 1),
+            "in_tokens": g["in_tokens"],
+            "billed_out": g["billed_out"],
+            "parse_error": g["parse_error"],
+            "raw": g["text"],
+        })
+
+        print(f"  [{i}/{len(cases)}] no={case['no']:>3} "
+              f"{'되묻기' if 되묻기 else '진행  '} "
+              f"({case['품명유형'] or '-'}) {case['입력'][:40]}")
+        if 되묻기:
+            print(f"          부족: {g['부족항목']}")
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    outdir = config.RESULTS_DIR / stamp
+    outdir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(outdir / "gate_detail.csv", index=False,
+                              encoding="utf-8-sig")
+    (outdir / "prompt.txt").write_text(pipeline.GATE_PROMPT, encoding="utf-8")
+
+    def rate(부분):
+        """되묻은 비율. 분모가 0이면 나눗셈이 터지므로 먼저 막는다."""
+        if not 부분:
+            return "0/0"
+        hit = sum(1 for r in 부분 if r["되묻기"])
+        return f"{hit / len(부분) * 100:.1f}% ({hit}/{len(부분)})"
+
+    # 품명유형별로 행을 모은다. setdefault(키, 기본값) 은 키가 없으면 기본값을
+    # 넣고 그걸 돌려준다 — 빈 리스트를 만들고 append 하는 관용구다.
+    유형별 = {}
+    for r in rows:
+        유형별.setdefault(r["품명유형"] or "(미분류)", []).append(r)
+
+    meta = {
+        "실행시각": stamp,
+        "조건": condition,
+        "모델": model_name,
+        "메모": note,
+        "건수": len(rows),
+        "되묻기율_전체": rate(rows),
+        **{f"되묻기율_{k}": rate(v) for k, v in sorted(유형별.items())},
+        "질문_평균": round(sum(r["질문수"] for r in rows) / len(rows), 2),
+        "총_elapsed": round(sum(r["elapsed"] for r in rows), 1),
+        "총_in_tokens": sum(r["in_tokens"] for r in rows),
+        "총_billed_out": sum(r["billed_out"] for r in rows),
+        "파싱실패": sum(1 for r in rows if r["parse_error"]),
+    }
+    (outdir / "summary.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    print()
+    for k, v in meta.items():
+        print(f"  {k}: {v}")
+    print()
+    print("  baseline(조건 B 28건): 품번only 14.3% (1/7) · 품명명확 0.0% (0/21)"
+          " · 질문 평균 0.07개")
+    print("  목표: 품번only 70% 이상, 품명명확 30% 이하")
     print()
     print(f"  저장: {outdir}")
     return meta
@@ -677,3 +926,16 @@ if __name__ == "__main__":
     print()
     print("--- summarize 확인 ---")
     print(" ", summarize(graded))
+
+    print()
+    print("--- baseline 재계산 (엑셀 플래그가 아니라 후보열 기준) ---")
+    base = load_baseline()
+    n = len(base)
+    t1 = sum(1 for b in base.values() if b["top1_6"])
+    t3 = sum(1 for b in base.values() if b["top3_6"])
+    사정권 = [no for no, b in base.items() if not b["top1_6"] and b["top3_6"]]
+    회수불가 = [no for no, b in base.items() if not b["top3_6"]]
+    print(f"  유효 {n}건 · Top1 6자리 {t1 / n * 100:.1f}% ({t1}/{n})"
+          f" · Top3 포함 {t3 / n * 100:.1f}% ({t3}/{n})")
+    print(f"  재정렬 사정권 {len(사정권)}건: {sorted(사정권, key=int)}")
+    print(f"  Top3에도 정답 없음 {len(회수불가)}건: {sorted(회수불가, key=int)}")
