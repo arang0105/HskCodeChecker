@@ -97,11 +97,18 @@ def search(query, top_k=5, include_eval=False, index=None, dim=None):
 
     include_eval=False 가 기본이다. 평가셋 29건은 검색 대상에서 빼고 찾는다.
     이걸 켜는 건 '누수가 있으면 숫자가 얼마나 부풀려지는가'를 측정할 때뿐이다.
+
+    **회귀 세트 20건은 include_eval 과 무관하게 항상 뺀다.** 자기 결정례가
+    검색되면 정답을 그대로 베끼게 되어, 회귀 세트가 재려던 것('쉬운 건이
+    안 깨지는가')이 아니라 누수를 재게 된다. include_eval 이 평가셋에만
+    걸리는 이유는 그 스위치의 용도가 누수 격차 측정 하나뿐이기 때문이다.
     """
     vectors, meta = index if index else load_index(dim)
 
-    # 평가셋 행을 뺀다. mask 는 True/False 배열이고, 이걸로 행을 골라낸다.
-    mask = np.ones(len(meta), dtype=bool) if include_eval else (meta["평가셋포함"] == "N").values
+    # mask 는 True/False 배열이고, 이걸로 행을 골라낸다.
+    # & 는 두 불리언 배열을 원소별로 AND 한다. 파이썬 and 는 배열에 못 쓴다.
+    회귀제외 = (meta["회귀셋"] == "N").values
+    mask = 회귀제외 if include_eval else 회귀제외 & (meta["평가셋포함"] == "N").values
     vectors, meta = vectors[mask], meta[mask].reset_index(drop=True)
 
     qvec = embed([query], "retrieval_query", dim=dim)[0]
@@ -147,8 +154,10 @@ def measure_coverage(top_ks=(1, 3, 5, 10, 20), main_k=5, condition="A", dim=None
     # 코퍼스 각 행의 6자리 코드. .values 는 pandas Series 를 numpy 배열로 바꾼다.
     codes6 = meta["결정세번_정규화"].str[:6].values
     is_eval = (meta["평가셋포함"] == "Y").values
+    is_reg = (meta["회귀셋"] == "Y").values
     # ~ 는 numpy 불리언 배열의 원소별 부정이다. 파이썬 not 은 배열에 못 쓴다.
-    정직 = ~is_eval
+    # 회귀 세트는 '포함' 조건에서도 뺀다. 누수 격차는 평가셋만의 이야기다.
+    정직 = ~is_eval & ~is_reg
 
     존재6 = set(codes6[정직])
     존재4 = {c[:4] for c in 존재6}
@@ -161,7 +170,7 @@ def measure_coverage(top_ks=(1, 3, 5, 10, 20), main_k=5, condition="A", dim=None
     qvecs = embed([c["입력"] for c in cases], "retrieval_query", dim=dim)
 
     maxk = max(top_ks)
-    조건들 = (("제외", 정직), ("포함", np.ones(len(meta), dtype=bool)))
+    조건들 = (("제외", 정직), ("포함", ~is_reg))
 
     rows = []
     for case, qvec in zip(cases, qvecs):  # zip 은 두 리스트를 나란히 묶는다
