@@ -82,12 +82,20 @@ def DB_준비():
     if st.session_state.get("db준비"):
         return
     try:
-        storage.init_db()
-    except Exception:
+        위치 = storage.init_db()
+    except Exception as e:
         # **여기서 죽으면 화면이 통째로 스택트레이스가 된다.** 기록은 부가
         # 기능이고 분류가 본체다. 플래그를 안 세우니 다음 실행에서 다시 시도한다.
-        # 실제로 못 쓰는 상태면 저장할 때 아래쪽 안내로 드러난다.
+        #
+        # 다만 **조용히 넘어가면 안 된다.** 한 번 그렇게 뒀다가, DATABASE_URL 이
+        # 안 잡혀 SQLite 로 떨어졌는데도 화면이 멀쩡해 보여서 못 알아챘다.
+        # print 는 Streamlit Cloud 의 "Manage app → 로그"에 찍힌다.
+        # 접속 실패 메시지에 host·user 는 나오지만 **비밀번호는 안 나온다.**
+        print(f"[기록 저장소] 연결 실패 — {type(e).__name__}: {e}")
         return
+    # 어느 쪽에 붙었는지 로그에 한 줄 남긴다. 이게 없으면 SQLite 로 떨어진 걸
+    # 화면만 봐서는 구분할 수 없다. init_db 는 접속 문자열을 돌려주지 않는다.
+    print(f"[기록 저장소] {위치}")
     st.session_state.db준비 = True
 
 
@@ -403,22 +411,56 @@ elif 결과:
     # 파일에 한 줄 덧붙이는 방식으로는 안 된다.
     run_id = 결과.get("run_id")
     if run_id:
+        # **언제 저장되는지가 화면에서 분명해야 한다.**
+        # 전에는 👍 는 누르는 즉시, 메모는 Enter·포커스 이동 때 저장됐는데
+        # 어디에도 그렇게 안 적혀 있었다. 게다가 메모가 비어 있지 않으면
+        # 화면이 다시 그려질 때마다 같은 내용을 계속 다시 썼다.
+        #
+        # 이제 규칙은 둘뿐이다.
+        #   👍/👎     → 누르는 즉시 저장. 클릭 한 번이 곧 제출이라 헷갈릴 게 없고,
+        #               버튼을 한 번 더 누르게 하면 가장 값싼 신호를 놓친다
+        #   글 의견   → [의견 보내기] 를 눌렀을 때만 저장
+        #
+        # 무엇을 이미 보냈는지 기억해 둔다. save_feedback 은 평가와 메모 두 열을
+        # **한꺼번에** UPDATE 하므로, 하나만 넘기면 다른 하나가 지워진다.
+        보낸 = st.session_state.setdefault(f"의견_{run_id}",
+                                         {"평가": None, "메모": None})
+
         st.markdown("**이 결과가 맞았나요?**")
         평가 = st.feedback("thumbs", key=f"fb_{run_id}")
         메모 = st.text_input("한 줄 의견 (선택)", key=f"memo_{run_id}",
                            label_visibility="collapsed",
                            placeholder="틀렸다면 정답이나 이유를 적어주세요 (선택)")
-        if 평가 is not None or 메모:
+        보내기 = st.button("의견 보내기", key=f"send_{run_id}")
+
+        새평가 = {1: "up", 0: "down"}.get(평가)
+        새메모 = 메모.strip() or None
+
+        보낼것 = None
+        if 새평가 is not None and 새평가 != 보낸["평가"]:
+            보낼것 = {"평가": 새평가, "메모": 보낸["메모"]}   # 메모는 건드리지 않는다
+        if 보내기:
+            if 새메모 is None:
+                st.caption(":orange[적을 내용이 없습니다. 👍/👎 만 눌러 주셔도 됩니다.]")
+            else:
+                보낼것 = {"평가": 새평가, "메모": 새메모}
+
+        if 보낼것:
             try:
-                storage.save_feedback(
-                    run_id,
-                    {1: "up", 0: "down"}.get(평가),
-                    메모 or None,
-                )
-                if 평가 is not None:
-                    st.caption("의견 고맙습니다. 저장했습니다.")
+                storage.save_feedback(run_id, 보낼것["평가"], 보낼것["메모"])
+                st.session_state[f"의견_{run_id}"] = 보낼것
+                보낸 = 보낼것
             except Exception:
-                st.caption(":orange[의견을 저장하지 못했습니다. 죄송합니다.]")
+                st.caption(":orange[저장하지 못했습니다. 잠시 뒤 다시 눌러 주세요.]")
+
+        # 무엇이 저장돼 있는지 **항상** 보여준다. 화면이 다시 그려져도 남는다.
+        if 보낸["평가"] or 보낸["메모"]:
+            남은것 = []
+            if 보낸["평가"]:
+                남은것.append("👍" if 보낸["평가"] == "up" else "👎")
+            if 보낸["메모"]:
+                남은것.append("의견")
+            st.caption(f"저장됨: {' · '.join(남은것)} — 고맙습니다.")
     elif 결과.get("저장실패"):
         # run_id 가 없으면 나중에 채울 행이 없으니 👍/👎 를 띄우지 않는다.
         # 대신 왜 안 뜨는지는 말해 준다 — 결과 자체는 정상이다.
