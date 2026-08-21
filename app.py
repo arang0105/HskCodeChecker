@@ -438,12 +438,29 @@ elif 결과:
         보낸 = st.session_state.setdefault(f"의견_{run_id}",
                                          {"평가": None, "메모": None})
 
-        st.markdown("**이 결과가 맞았나요?**")
-        평가 = st.feedback("thumbs", key=f"fb_{run_id}")
+        # 묻는 말과 👍/👎 를 **같은 줄에** 둔다. 세로로 쌓으면 둘이 한 묶음으로
+        # 안 보이고, 그만큼 아래 입력칸까지 밀려 내려간다.
+        # vertical_alignment 는 열 높이가 서로 다를 때 세로 가운데로 맞춘다 —
+        # 이게 없으면 글씨와 아이콘이 윗변 기준으로 붙어 어긋나 보인다.
+        c_묻기, c_따봉 = st.columns([3, 1], vertical_alignment="center")
+        with c_묻기:
+            st.markdown("**이 결과가 맞았나요?**")
+        with c_따봉:
+            평가 = st.feedback("thumbs", key=f"fb_{run_id}")
+
         메모 = st.text_input("한 줄 의견 (선택)", key=f"memo_{run_id}",
                            label_visibility="collapsed",
                            placeholder="틀렸다면 정답이나 이유를 적어주세요 (선택)")
-        보내기 = st.button("의견 보내기", key=f"send_{run_id}")
+
+        # 보내기 버튼은 입력칸 **오른쪽 끝**에 붙인다. 글을 다 쓰고 시선이
+        # 멈추는 자리이고, 위쪽 [분류하기] 와 같은 위치라 규칙이 하나가 된다.
+        # 빈 열을 왼쪽에 두는 것이 Streamlit 에서 오른쪽 정렬하는 방법이다.
+        _, c_보내기 = st.columns([3, 1])
+        with c_보내기:
+            # type="primary" 가 테마 색을 입힌다. 기본값은 테두리만 있는 흰
+            # 버튼이라 눌러야 저장된다는 게 안 보였다.
+            보내기 = st.button("의견 보내기", key=f"send_{run_id}",
+                            type="primary", use_container_width=True)
 
         새평가 = {1: "up", 0: "down"}.get(평가)
         새메모 = 메모.strip() or None
