@@ -134,6 +134,17 @@ def 일일_더하기(delta):
 # setdefault 는 "키가 없을 때만 넣는다". 매 실행마다 이 줄을 지나가지만
 # 두 번째부터는 아무 일도 안 한다.
 st.session_state.setdefault("세션id", str(uuid.uuid4()))
+
+# 주소 뒤의 ?u=... 를 한 번만 읽어 세션에 붙들어 둔다.
+#
+# 사용자가 주소창을 건드리거나 앱이 화면을 다시 그리면서 파라미터가 날아갈 수
+# 있어서, **처음 들어온 순간의 값**을 기억해 둔다. setdefault 가 그 일을 한다.
+#
+# 길이를 자르는 이유 — 주소는 아무나 아무 값이나 넣을 수 있다. SQL 은
+# 자리표시자를 쓰니 인젝션은 막히지만, 긴 쓰레기가 열에 그대로 쌓이는 건
+# 막아야 한다.
+st.session_state.setdefault(
+    "유입", (st.query_params.get("u") or "").strip()[:20] or None)
 st.session_state.setdefault("입력", "")
 st.session_state.setdefault("분류횟수", 0)
 st.session_state.setdefault("게이트횟수", 0)
@@ -688,6 +699,7 @@ if 눌림 or 강행:
 
         기록 = {
             "세션id": st.session_state.세션id,
+            "유입": st.session_state.유입,
             "물품설명": desc,
             "입력출처": 출처,
             "카탈로그_빠진정보": (초안 or {}).get("빠진정보", []),
