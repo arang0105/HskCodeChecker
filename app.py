@@ -65,18 +65,30 @@ def 세번표_로드():
 
 
 def DB_준비():
-    """테이블이 없으면 만든다. **캐시하지 않는다.**
+    """테이블이 없으면 만든다. **세션당 한 번만 돈다.**
 
-    처음에 @st.cache_resource 를 붙였다가 깨졌다. 캐시는 "이 함수를 이미
-    돌렸다"를 기억하는데, 이 함수는 값을 계산하는 게 아니라 바깥 상태(파일)를
-    바꾼다. DB 파일을 지우자 앱은 "이미 만들었다"를 들고 있어서 다시 만들지
-    않았고, 저장할 때 no such table: runs 로 죽었다.
+    처음엔 @st.cache_resource 를 붙였다가 깨졌다. 캐시는 "이 함수를 이미
+    돌렸다"를 프로세스가 사는 내내 기억하는데, 이 함수는 값을 계산하는 게 아니라
+    바깥 상태(DB)를 바꾼다. DB 파일을 지우자 앱은 "이미 만들었다"를 들고 있어서
+    다시 만들지 않았고, 저장할 때 no such table: runs 로 죽었다.
 
-    **바깥 상태를 바꾸는 함수는 캐시하면 안 된다.** 그 상태는 앱 모르게
-    사라질 수 있다. 그리고 아낄 것도 없다 — CREATE TABLE IF NOT EXISTS 는
-    표가 있으면 아무 일도 안 하고 끝난다.
+    그래서 매번 부르게 두었는데, 저장소가 Supabase 로 가면서 그건 비싸졌다.
+    화면은 위젯을 건드릴 때마다 처음부터 다시 그려진다. 로컬 파일이면 공짜지만
+    원격 DB 로는 **버튼 한 번에 TCP+TLS 접속 + information_schema 조회**가 붙는다.
+
+    절충이 st.session_state 플래그다. 캐시와 달리 **새로고침하면 풀리므로**,
+    DB 가 앱 모르게 사라졌을 때의 복구 경로(F5)가 살아 있다.
     """
-    storage.init_db()
+    if st.session_state.get("db준비"):
+        return
+    try:
+        storage.init_db()
+    except Exception:
+        # **여기서 죽으면 화면이 통째로 스택트레이스가 된다.** 기록은 부가
+        # 기능이고 분류가 본체다. 플래그를 안 세우니 다음 실행에서 다시 시도한다.
+        # 실제로 못 쓰는 상태면 저장할 때 아래쪽 안내로 드러난다.
+        return
+    st.session_state.db준비 = True
 
 
 # ---------------------------------------------------------------- 일일 카운터
@@ -397,13 +409,21 @@ elif 결과:
                            label_visibility="collapsed",
                            placeholder="틀렸다면 정답이나 이유를 적어주세요 (선택)")
         if 평가 is not None or 메모:
-            storage.save_feedback(
-                run_id,
-                {1: "up", 0: "down"}.get(평가),
-                메모 or None,
-            )
-            if 평가 is not None:
-                st.caption("의견 고맙습니다. 저장했습니다.")
+            try:
+                storage.save_feedback(
+                    run_id,
+                    {1: "up", 0: "down"}.get(평가),
+                    메모 or None,
+                )
+                if 평가 is not None:
+                    st.caption("의견 고맙습니다. 저장했습니다.")
+            except Exception:
+                st.caption(":orange[의견을 저장하지 못했습니다. 죄송합니다.]")
+    elif 결과.get("저장실패"):
+        # run_id 가 없으면 나중에 채울 행이 없으니 👍/👎 를 띄우지 않는다.
+        # 대신 왜 안 뜨는지는 말해 준다 — 결과 자체는 정상이다.
+        st.caption(f":orange[기록 저장에 실패해 의견 남기기를 띄우지 못했습니다 "
+                   f"({결과['저장실패']}). 위 결과는 정상입니다.]")
 
     st.warning(
         "**참고용입니다.** 신고 전 관세사 확인 또는 관세청 품목분류 사전심사를 받으세요."
@@ -594,7 +614,7 @@ if 눌림 or 강행:
         else:
             출처 = "카탈로그(수정)"
 
-        결과["run_id"] = storage.save_run({
+        기록 = {
             "세션id": st.session_state.세션id,
             "물품설명": desc,
             "입력출처": 출처,
@@ -621,7 +641,19 @@ if 눌림 or 강행:
             "in_tokens": 합("in_tokens"),
             "billed_out": 합("billed_out"),
             "오류": 오류,
-        })
+        }
+
+        # **저장 실패가 분류 결과를 지우면 안 된다.**
+        # 여기까지 오는 데 pro 1콜을 썼다. 로컬 파일일 땐 실패할 일이 거의
+        # 없었지만 원격 DB 는 끊긴다. 기록은 부가 기능, 답이 본체다.
+        # 게이트를 fail-open 으로 둔 것과 같은 원칙이다.
+        try:
+            결과["run_id"] = storage.save_run(기록)
+        except Exception as e:
+            결과["run_id"] = None
+            # 예외 메시지 대신 **종류 이름만** 보여준다. 접속 실패 메시지에는
+            # 호스트나 사용자명 같은 접속 정보가 섞여 나온다.
+            결과["저장실패"] = type(e).__name__
 
         st.session_state.결과 = 결과
         if not 오류:
