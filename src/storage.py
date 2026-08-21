@@ -281,8 +281,16 @@ def save_run(row, path=None):
     값들 = [_to_db(이름, row.get(이름)) for 이름 in 이름들]
 
     # 시각을 안 넘겼으면 지금 시각을 넣는다.
+    #
+    # **config.KST 를 반드시 넘긴다.** 인자 없는 datetime.now() 는 코드가 도는
+    # 기계의 시각이라, 배포 컨테이너(UTC)에서는 9시간 이른 값이 저장된다.
+    # 남는 문자열은 '2026-08-21T17:17:00+09:00' 처럼 오프셋이 붙는데, 이걸
+    # 잘라내지 않는 이유는 **데이터만 보고 시간대를 판정할 수 있어야** 같은 일이
+    # 다시 났을 때 바로 알아채기 때문이다.
     if row.get("시각") is None:
-        값들[이름들.index("시각")] = datetime.now().isoformat(timespec="seconds")
+        값들[이름들.index("시각")] = (
+            datetime.now(config.KST).isoformat(timespec="seconds")
+        )
 
     conn, pg = _connect(path)
     자리 = ", ".join(_ph(pg) for _ in 이름들)
@@ -318,8 +326,9 @@ def save_feedback(run_id, 평가, 메모=None, path=None):
 def daily_count(날짜, path=None):
     """그 날짜에 몇 건 썼는지 돌려준다. 행이 없으면 0 이다.
 
-    날짜는 '2026-08-21' 같은 문자열이다. 부르는 쪽에서 date.today().isoformat()
-    으로 넘긴다 — **서버 시각 기준**이라는 뜻이고, 파일 방식일 때와 같다.
+    날짜는 '2026-08-21' 같은 문자열이다. 부르는 쪽에서
+    datetime.now(config.KST).date().isoformat() 으로 넘긴다 — **KST 기준**이다.
+    서버 시각(배포 컨테이너는 UTC)을 쓰면 상한이 한국 시각 오전 9시에 리셋된다.
     """
     conn, pg = _connect(path)
     with closing(conn) as conn, conn:
@@ -440,7 +449,7 @@ if __name__ == "__main__":
     print(f"\n전체 {len(load_runs(path=시험))}건")
 
     # 일일 카운터
-    오늘 = datetime.now().date().isoformat()
+    오늘 = datetime.now(config.KST).date().isoformat()
     print(f"\n=== 일일 카운터 ({오늘}) ===")
     print(f"  처음      : {daily_count(오늘, path=시험)}  (행이 없으니 0)")
     daily_add(오늘, 1, path=시험)

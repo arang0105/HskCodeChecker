@@ -4,6 +4,7 @@
 """
 
 import os
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,6 +28,18 @@ if not GEMINI_API_KEY:
 # Streamlit Community Cloud 는 Secrets 의 최상위 문자열을 환경변수로도 올려 준다.
 # GEMINI_API_KEY 가 배포에서 그렇게 들어오고 있으므로 이것도 같은 방식이면 된다.
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# 저장하는 모든 시각의 기준.
+#
+# **datetime.now() 는 "지금"이 아니라 "이 기계가 생각하는 지금"을 준다.**
+# 내 노트북은 KST 라 맞게 보였지만, 배포된 앱이 도는 Streamlit Cloud 컨테이너는
+# UTC 여서 기록이 9시간 이르게 찍혔다(17:17 에 넣은 건이 08:17 로 남았다).
+# 같은 함수가 일일 상한의 날짜 키로도 쓰여서, 상한이 한국 시각 오전 9시에
+# 리셋되고 있었다.
+#
+# 한국은 서머타임이 없어 고정 오프셋으로 충분하다. zoneinfo 를 안 쓴 것은
+# Windows 에서 tzdata 패키지를 따로 요구할 수 있어서다.
+KST = timezone(timedelta(hours=9))
 
 # 모델 두 개를 분리해 둔다.
 #   MAIN : 공식 기록을 남기는 평가용 (유료)

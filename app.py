@@ -9,7 +9,7 @@ st.session_state (dict 처럼 쓰는 저장소) 에 넣는다.
 
 import os
 import uuid
-from datetime import date
+from datetime import datetime
 
 import streamlit as st
 
@@ -101,6 +101,21 @@ def DB_준비():
 
 
 # ---------------------------------------------------------------- 일일 카운터
+def _오늘():
+    """일일 카운터의 날짜 키. **한국 시각 기준의 오늘**이다.
+
+    전에는 date.today() 였는데, 그건 코드가 도는 기계의 날짜다. 배포
+    컨테이너는 UTC 라 상한이 한국 시각 오전 9시에 리셋되고 있었다.
+
+    아래 두 함수가 같은 표현을 두 번 쓰지 않게 따로 뺐다. 하나는 세고 하나는
+    더하는데, 둘이 **반드시 같은 날짜를 봐야** 카운터가 맞는다.
+
+    이름 앞의 밑줄은 "이 파일 안에서만 쓴다"는 파이썬 관례다.
+    Java 의 private 과 뜻은 같지만 문법으로 막아 주지는 않는다.
+    """
+    return datetime.now(config.KST).date().isoformat()
+
+
 def 일일_사용량():
     """오늘 몇 건 분류했는지 읽는다. 날짜가 바뀌면 0부터 다시 센다.
 
@@ -115,7 +130,7 @@ def 일일_사용량():
     막히더라도 **세션 5회 상한은 st.session_state 라서 그대로 산다.**
     """
     try:
-        return storage.daily_count(date.today().isoformat())
+        return storage.daily_count(_오늘())
     except Exception as e:
         print(f"[일일 카운터] 읽기 실패 — {type(e).__name__}: {e}", flush=True)
         return 0
@@ -124,7 +139,7 @@ def 일일_사용량():
 def 일일_더하기(delta):
     """오늘 사용량을 delta 만큼 바꾼다. 실패했을 때 -1 로 되돌리는 데도 쓴다."""
     try:
-        return storage.daily_add(date.today().isoformat(), delta)
+        return storage.daily_add(_오늘(), delta)
     except Exception as e:
         print(f"[일일 카운터] 쓰기 실패 — {type(e).__name__}: {e}", flush=True)
         return 0
