@@ -34,12 +34,33 @@ RETRY = 3        # 총 시도 횟수
 RETRY_WAIT = 20  # 첫 대기(초). 재시도할수록 늘린다
 
 
-def ask(prompt, model=None, temperature=1.0, as_json=False):
+def file_part(data, mime_type):
+    """업로드된 파일 하나를 Gemini 가 받는 형태로 감싼다.
+
+    돌려주는 건 그냥 dict 다. SDK 가 이 모양({"mime_type":..., "data":...})을
+    그대로 알아듣기 때문에 별도 클래스를 만들 이유가 없다.
+
+    data 는 bytes 다 — 문자열이 아니라 **바이트 덩어리**. 파이썬에서
+    b"..." 로 쓰는 그 타입이고, Streamlit 의 업로드 객체는 .getvalue() 로 준다.
+    Java 의 byte[] 와 같다고 보면 된다.
+
+    **genai.upload_file() 을 쓰지 않는 이유** — 그건 구글 쪽에 파일을 하나
+    만들어 두고 나중에 지워야 하는 방식이다. 여기서는 요청에 실어 보내고
+    끝낸다. 업로드한 카탈로그를 어디에도 남기지 않기로 했기 때문이다.
+    """
+    return {"mime_type": mime_type, "data": data}
+
+
+def ask(prompt, model=None, temperature=1.0, as_json=False, parts=None):
     """프롬프트를 보내고 응답과 사용량을 dict로 돌려준다.
 
     model 을 안 주면 개발용(저렴한) 모델을 쓴다.
     temperature 기본값 1.0 은 baseline 측정 조건과 맞춘 것이다.
     as_json=True 면 모델에게 JSON만 출력하도록 강제한다.
+
+    parts 는 같이 보낼 파일 목록이다(file_part() 로 만든다). PDF·이미지를
+    붙일 때 쓴다. 안 주면 지금까지처럼 글자만 보낸다 — **기존 호출부는
+    한 줄도 안 바뀐다.** 기본값이 None 이라 안 넘기면 없는 것과 같다.
     """
     model_name = model or config.MODEL_DEV
 
@@ -49,13 +70,20 @@ def ask(prompt, model=None, temperature=1.0, as_json=False):
         # 이 한 줄이 핵심. 모델이 설명文·마크다운 없이 JSON만 뱉게 만든다.
         gen_config["response_mime_type"] = "application/json"
 
+    # 파일이 없으면 문자열 하나를, 있으면 [프롬프트, 파일, 파일...] 리스트를
+    # 보낸다. SDK 가 둘 다 받는다.
+    #   [prompt, *parts] 의 * 는 리스트를 펼쳐 넣는 표시다.
+    #   parts 가 [a, b] 면 [prompt, a, b] 가 된다. 리스트 안에 리스트가
+    #   들어가는 걸 막으려는 것이다.
+    contents = prompt if not parts else [prompt, *parts]
+
     started = time.time()
 
     # range(1, RETRY + 1) 은 1, 2, 3 을 준다. 시도 횟수를 1부터 세려는 것.
     for attempt in range(1, RETRY + 1):
         try:
             response = genai.GenerativeModel(model_name).generate_content(
-                prompt,
+                contents,
                 generation_config=gen_config,
             )
             break  # 성공했으면 반복을 빠져나간다
@@ -87,14 +115,15 @@ def ask(prompt, model=None, temperature=1.0, as_json=False):
     }
 
 
-def ask_json(prompt, model=None, temperature=1.0):
+def ask_json(prompt, model=None, temperature=1.0, parts=None):
     """ask() 와 같지만 응답을 파싱해 'data' 키에 파이썬 dict 로 담아 준다.
 
     파싱에 실패하면 data=None 이고 'raw' 에 원문이 남는다.
     실패를 예외로 터뜨리지 않는 이유: 29건 배치 중 1건이 깨졌다고
     전체가 멈추면 안 되기 때문이다.
     """
-    result = ask(prompt, model=model, temperature=temperature, as_json=True)
+    result = ask(prompt, model=model, temperature=temperature, as_json=True,
+                 parts=parts)
 
     # try/except 는 Java의 try/catch 와 같다. 'as e' 가 catch 변수명.
     try:
