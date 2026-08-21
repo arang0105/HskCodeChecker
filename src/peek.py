@@ -32,7 +32,10 @@ from src import config
 
 # 한글이 cp949 콘솔에서 깨지는 것을 막는다. 명령 앞에 PYTHONIOENCODING=utf-8
 # 를 매번 붙이지 않아도 되게 코드에서 처리한다.
+# **stderr 도 함께 해야 한다.** stdout 만 고쳤더니 오류가 났을 때 파이썬이
+# 찍는 추적 메시지의 한글 함수 이름이 깨져 나와, 정작 필요할 때 못 읽었다.
 sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 load_dotenv(config.ROOT / ".env")
 READ_URL = os.getenv("READ_DATABASE_URL")
