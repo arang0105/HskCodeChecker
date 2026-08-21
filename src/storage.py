@@ -1,21 +1,33 @@
-"""앱 실행 기록 저장 (SQLite).
+"""앱 실행 기록 저장 (SQLite 또는 Supabase/Postgres).
 
 app.py 만 이 모듈을 부른다. 파이프라인([1][3][4])은 부르지 않는다 —
 측정 코드와 앱 코드를 섞지 않으려는 것이다.
 
-**왜 SQLite 인가**
-sqlite3 는 파이썬 표준 라이브러리다. requirements.txt 가 안 늘고, 접속 정보도
-없고, 서버도 없다. 파일 하나가 곧 DB다. 지인 3명 규모에서 Postgres 를 띄울
-이유가 없다.
+**저장소가 두 개인 이유**
 
-**알아둘 한계**
-Streamlit Community Cloud 의 파일시스템은 휘발성이다. 앱이 재시작되면 이 파일이
-사라진다. 로컬 실행에서는 영속하고, 배포 환경에서는 컨테이너가 사는 동안만 남는다.
-영속이 필요해지면 _connect() 안쪽만 외부 DB 로 바꾸면 된다.
+처음에는 SQLite 하나였다. 표준 라이브러리라 의존성이 안 늘고, 접속 정보도 서버도
+없고, 파일 하나가 곧 DB다. 지인 3명 규모에 Postgres 를 띄울 이유가 없었다.
+
+깨진 건 배포 쪽이다. Streamlit Community Cloud 의 파일시스템은 휘발성이라
+**앱이 재시작되거나 재배포되면 그 파일이 통째로 사라진다.** 실제로 첫 실사용
+기록이 그렇게 날아갔고, 배포 환경에는 셸이 없어 사라지기 전에 꺼낼 수도 없었다.
+
+이게 편의 문제가 아닌 이유 — 봉인(홀드아웃) 열람 2회를 다 썼다. 남은 측정 채널은
+"실무자가 실제로 넣은 물품설명 + 👍/👎" 하나뿐인데, 그게 재배포 한 번에 지워지면
+채널이 아니다.
+
+그래서 config.DATABASE_URL 하나로 갈린다.
+
+    있으면 → Supabase(Postgres). 배포에서 쓴다
+    없으면 → data/runs.db (SQLite). 로컬 개발의 기본값이고 지금까지와 같다
+
+**로컬 .env 에는 DATABASE_URL 을 넣지 않는다.** 넣으면 내 시험 실행이 지인들의
+실제 기록과 같은 표에 쌓인다. 배포 기록은 Supabase 대시보드에서 본다.
 
 **저장하는 내용에 사용자의 물품설명 원문이 들어간다.**
 .gitignore 에 data/*.db 가 들어 있다. 저장소가 공개이므로 한 번 푸시되면
-히스토리에서 지우기 어렵다.
+히스토리에서 지우기 어렵다. Postgres 쪽은 제3자(Supabase/AWS)에 영속 저장된다는
+점을 사용자에게 알려야 한다.
 """
 
 import json
@@ -80,20 +92,50 @@ _JSON_COLS = {"게이트_부족항목", "게이트_질문", "후보1차", "검�
 
 
 def _connect(path=None):
-    """DB 연결을 연다. 파일이 없으면 그 자리에서 만들어진다.
+    """DB 연결을 연다. **(연결, 포스트그레스인가) 두 개를 돌려준다.**
 
-    row_factory 를 sqlite3.Row 로 두면 결과를 row["물품설명"] 처럼
-    열 이름으로 꺼낼 수 있다. 기본값은 튜플이라 row[2] 같은 숫자 인덱스만
-    되는데, 열이 22개면 그건 못 읽는 코드가 된다.
+    파이썬 함수는 `return a, b` 로 값을 여러 개 돌려줄 수 있다. 자바처럼 담을
+    클래스를 만들 필요가 없다. 받는 쪽은 `conn, pg = _connect()` 로 푼다.
+
+    갈림길은 두 가지다.
+      path 를 주면      → **무조건 SQLite 파일.** 자체시험·로컬 확인용이다
+      path 가 없으면    → DATABASE_URL 이 있으면 Postgres, 없으면 기본 SQLite
+
+    row_factory / cursor_factory 는 같은 일을 한다 — 결과를 row["물품설명"] 처럼
+    열 이름으로 꺼내게 해 준다. 기본값은 튜플이라 row[2] 같은 숫자 인덱스만
+    되는데, 열이 30개면 그건 못 읽는 코드가 된다.
     """
+    if path is None and config.DATABASE_URL:
+        # **함수 안에서 import 한다.** 로컬은 SQLite 로 도니까 psycopg2 가 깔려
+        # 있지 않아도 앱이 떠야 한다. 파이썬의 import 는 선언이 아니라 실행문이라
+        # 이게 된다 — 이 줄에 닿기 전까지는 아무 일도 안 일어난다.
+        # (자바의 import 는 컴파일 시점이라 이렇게 못 쓴다)
+        import psycopg2
+        import psycopg2.extras
+
+        conn = psycopg2.connect(
+            config.DATABASE_URL,
+            connect_timeout=10,          # 안 잡히는 DB 를 무한정 기다리지 않는다
+            cursor_factory=psycopg2.extras.RealDictCursor,
+        )
+        return conn, True
+
     conn = sqlite3.connect(path or DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    return conn, False
+
+
+def _ph(pg):
+    """SQL 자리표시자. SQLite 는 ?, Postgres 는 %s 를 쓴다.
+
+    방언 차이는 이것 말고 두 개 더 있고, 전부 init_db() 안에 모아 뒀다.
+    """
+    return "%s" if pg else "?"
 
 
 # 아래 함수들이 전부 이 한 줄 패턴을 쓴다.
 #
-#     with closing(_connect(path)) as conn, conn:
+#     with closing(_connect(path)[0]) as conn, conn:
 #
 # **두 개가 하는 일이 다르다.**
 #   closing(...)  : 블록을 나갈 때 연결을 닫는다
@@ -103,6 +145,11 @@ def _connect(path=None):
 # Java 의 try-with-resources 가 close() 를 불러 주는 것과 다른 지점이고,
 # 실제로 이걸 빼먹었더니 Windows 에서 파일이 잠겨 삭제가 안 됐다.
 # 콤마로 이어 쓴 것은 with 두 개를 겹친 것과 같다.
+# psycopg2 연결도 with 두 개를 똑같이 지원해서 이 패턴이 그대로 통한다.
+#
+# 다만 **실행은 conn 이 아니라 커서로 한다** — psycopg2 연결에는 .execute() 가
+# 아예 없다. sqlite3 연결에는 있지만 .cursor() 도 있으므로, 커서 쪽으로 맞추면
+# 두 DB 를 위한 코드가 하나로 합쳐진다.
 
 
 def init_db(path=None):
@@ -112,22 +159,40 @@ def init_db(path=None):
     id 는 안 적어도 SQLite 가 rowid 로 자동 부여한다.
     """
     정의 = ",\n            ".join(f"{이름} {타입}" for 이름, 타입 in COLUMNS)
-    with closing(_connect(path)) as conn, conn:
-        conn.execute(f"""
+    conn, pg = _connect(path)
+
+    # **방언 차이 두 개가 여기 다 있다.**
+    #   자동 증가 PK : SQLite 는 INTEGER ... AUTOINCREMENT, Postgres 는 SERIAL
+    #   기존 열 목록 : SQLite 는 PRAGMA, Postgres 는 information_schema
+    # COLUMNS 의 타입(TEXT/INTEGER/REAL)은 양쪽 다 유효해서 손대지 않는다.
+    # 한글 열 이름도 Postgres 에서 그대로 쓸 수 있다.
+    pk = "id SERIAL PRIMARY KEY" if pg else "id INTEGER PRIMARY KEY AUTOINCREMENT"
+    열목록_sql = (
+        "SELECT column_name AS name FROM information_schema.columns "
+        "WHERE table_name = 'runs'"
+        if pg else "PRAGMA table_info(runs)"
+    )
+
+    with closing(conn) as conn, conn:
+        cur = conn.cursor()
+        cur.execute(f"""
         CREATE TABLE IF NOT EXISTS runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            {pk},
             {정의}
         )""")
 
         # **CREATE TABLE IF NOT EXISTS 는 이미 있는 표에 열을 더해 주지 않는다.**
-        # 나중에 COLUMNS 에 열을 하나 추가하면, 기존 DB 파일에서는 INSERT 가
+        # 나중에 COLUMNS 에 열을 하나 추가하면, 기존 DB 에서는 INSERT 가
         # "no such column" 으로 죽는다. 없는 열만 골라 덧붙여 그걸 막는다.
-        기존 = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+        cur.execute(열목록_sql)
+        기존 = {r["name"] for r in cur.fetchall()}
         for 이름, 타입 in COLUMNS:
             if 이름 not in 기존:
-                conn.execute(f"ALTER TABLE runs ADD COLUMN {이름} {타입}")
+                cur.execute(f"ALTER TABLE runs ADD COLUMN {이름} {타입}")
                 print(f"  열 추가: {이름}")
-    return path or DB_PATH
+    # 어디에 만들었는지만 돌려준다. **DATABASE_URL 자체는 절대 돌려주지 않는다** —
+    # 접속 문자열에 비밀번호가 들어 있어서, 로그나 화면에 찍히면 그게 유출이다.
+    return path or ("Supabase(Postgres)" if pg else DB_PATH)
 
 
 def _to_db(이름, 값):
@@ -149,9 +214,9 @@ def save_run(row, path=None):
     row 는 dict 다. 없는 키는 NULL 로 들어간다 — 게이트에서 멈춘 건은
     [1]~[4] 열이 전부 비게 되는데, 그 자체가 "되물어서 분류하지 않았다"는 기록이다.
 
-    인자 22개짜리 함수를 만들지 않은 이유는 부르는 쪽에서 순서를 틀리기 때문이다.
+    인자 30개짜리 함수를 만들지 않은 이유는 부르는 쪽에서 순서를 틀리기 때문이다.
 
-    ? 자리표시자를 쓰고 문자열을 직접 이어 붙이지 않는다. 사용자가 넣은
+    자리표시자를 쓰고 문자열을 직접 이어 붙이지 않는다. 사용자가 넣은
     물품설명이 그대로 SQL 이 되는 것을 막는다(SQL 인젝션). JDBC 의
     PreparedStatement 와 같은 이유·같은 방식이다.
     """
@@ -162,11 +227,19 @@ def save_run(row, path=None):
     if row.get("시각") is None:
         값들[이름들.index("시각")] = datetime.now().isoformat(timespec="seconds")
 
-    자리 = ", ".join("?" for _ in 이름들)
+    conn, pg = _connect(path)
+    자리 = ", ".join(_ph(pg) for _ in 이름들)
     sql = f"INSERT INTO runs ({', '.join(이름들)}) VALUES ({자리})"
 
-    with closing(_connect(path)) as conn, conn:
-        cur = conn.execute(sql, 값들)
+    with closing(conn) as conn, conn:
+        cur = conn.cursor()
+        if pg:
+            # Postgres 에는 lastrowid 가 없다. 방금 넣은 행의 id 를 달라고
+            # INSERT 문에 직접 붙여서 받아 온다. 나중에 👍/👎 를 그 행에
+            # 채우려면 id 가 반드시 있어야 한다.
+            cur.execute(sql + " RETURNING id", 값들)
+            return cur.fetchone()["id"]
+        cur.execute(sql, 값들)
         return cur.lastrowid
 
 
@@ -176,9 +249,11 @@ def save_feedback(run_id, 평가, 메모=None, path=None):
     이것 때문에 파일 append 가 아니라 DB 여야 한다. 이미 쓴 줄을 고쳐야 하는데,
     CSV 에 한 줄 덧붙이는 방식으로는 못 한다.
     """
-    with closing(_connect(path)) as conn, conn:
-        conn.execute(
-            "UPDATE runs SET 평가 = ?, 평가메모 = ? WHERE id = ?",
+    conn, pg = _connect(path)
+    q = _ph(pg)
+    with closing(conn) as conn, conn:
+        conn.cursor().execute(
+            f"UPDATE runs SET 평가 = {q}, 평가메모 = {q} WHERE id = {q}",
             (평가, 메모, run_id),
         )
 
@@ -189,11 +264,13 @@ def load_runs(limit=100, path=None):
     **앱 화면에는 이 함수를 붙이지 않는다.** 공개 URL 에 조회 화면을 만들면
     남이 입력한 물품설명이 그대로 노출된다. 조회는 로컬에서만 한다.
     """
-    with closing(_connect(path)) as conn, conn:
-        rows = conn.execute(
-            "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+    conn, pg = _connect(path)
+    with closing(conn) as conn, conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM runs ORDER BY id DESC LIMIT {_ph(pg)}", (limit,))
+        rows = cur.fetchall()
     # sqlite3.Row 를 그대로 두면 밖에서 쓰기 불편하다. dict 로 바꿔 돌려준다.
+    # RealDictCursor 가 준 행에도 dict() 가 그대로 통한다.
     return [dict(r) for r in rows]
 
 

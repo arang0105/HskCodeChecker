@@ -13,3 +13,9 @@ python-dotenv==1.2.3
 # 결정례 수집용. CLIP이 JSON을 돌려주므로 HTML 파서는 필요 없다.
 # 배포에는 필요 없지만 지우면 collect.py 가 안 돈다.
 requests==2.34.2
+
+# 배포 기록용 Postgres(Supabase) 드라이버.
+# 로컬은 DATABASE_URL 이 없어 SQLite 로 도니까 이게 없어도 앱이 뜬다
+# (storage._connect 가 함수 안에서 import 한다). 그래도 여기 적어 두는 이유는,
+# 배포에서만 필요한 패키지를 빼 두면 배포에서만 깨지기 때문이다.
+psycopg2-binary==2.9.12
