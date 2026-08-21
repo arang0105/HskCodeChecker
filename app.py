@@ -91,11 +91,14 @@ def DB_준비():
         # 안 잡혀 SQLite 로 떨어졌는데도 화면이 멀쩡해 보여서 못 알아챘다.
         # print 는 Streamlit Cloud 의 "Manage app → 로그"에 찍힌다.
         # 접속 실패 메시지에 host·user 는 나오지만 **비밀번호는 안 나온다.**
-        print(f"[기록 저장소] 연결 실패 — {type(e).__name__}: {e}")
+        # flush=True 가 필요하다. 파이썬은 출력이 터미널이 아니면 버퍼에 모아
+        # 두는데, 배포 로그로는 그 버퍼가 언제 비워질지 알 수 없다.
+        # 실제로 이 줄이 없어서 로그에 아무것도 안 찍혔다.
+        print(f"[기록 저장소] 연결 실패 — {type(e).__name__}: {e}", flush=True)
         return
     # 어느 쪽에 붙었는지 로그에 한 줄 남긴다. 이게 없으면 SQLite 로 떨어진 걸
     # 화면만 봐서는 구분할 수 없다. init_db 는 접속 문자열을 돌려주지 않는다.
-    print(f"[기록 저장소] {위치}")
+    print(f"[기록 저장소] {위치}", flush=True)
     st.session_state.db준비 = True
 
 
