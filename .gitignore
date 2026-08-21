@@ -25,9 +25,6 @@ data/카탈로그_시험/
 data/*.db
 data/*.db-journal
 
-# 일일 호출 카운터
-.usage_daily.json
-
 # 관세청 HS부호 원본 XLSX. 공공데이터포털에서 다시 받을 수 있고,
 # 커밋하는 건 여기서 만든 data/hsk_codes.csv 쪽이다.
 data/관세청_HS부호*.xlsx

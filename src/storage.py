@@ -190,6 +190,20 @@ def init_db(path=None):
             if 이름 not in 기존:
                 cur.execute(f"ALTER TABLE runs ADD COLUMN {이름} {타입}")
                 print(f"  열 추가: {이름}")
+
+        # 일일 호출 상한 카운터. 원래 .usage_daily.json 파일이었는데,
+        # 배포 파일시스템이 휘발성이라 **재배포할 때마다 상한이 0 으로
+        # 리셋됐다.** CLAUDE.md 가 "상한이 유일한 방어선"이라고 못 박은
+        # 항목이라 runs 와 같은 DB 로 옮겼다.
+        #
+        # 날짜별로 한 행이다. 날짜가 바뀌면 그 날짜 행이 없으니 0 부터 센다 —
+        # 파일 방식에서 날짜를 비교하던 것과 같은 동작이다.
+        # 지난 날짜 행은 그냥 쌓이는데, 하루 한 행이라 신경 쓸 양이 아니다.
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS counters (
+            날짜 TEXT PRIMARY KEY,
+            횟수 INTEGER NOT NULL DEFAULT 0
+        )""")
     # 어디에 만들었는지만 돌려준다. **DATABASE_URL 자체는 절대 돌려주지 않는다** —
     # 접속 문자열에 비밀번호가 들어 있어서, 로그나 화면에 찍히면 그게 유출이다.
     return path or ("Supabase(Postgres)" if pg else DB_PATH)
@@ -256,6 +270,57 @@ def save_feedback(run_id, 평가, 메모=None, path=None):
             f"UPDATE runs SET 평가 = {q}, 평가메모 = {q} WHERE id = {q}",
             (평가, 메모, run_id),
         )
+
+
+def daily_count(날짜, path=None):
+    """그 날짜에 몇 건 썼는지 돌려준다. 행이 없으면 0 이다.
+
+    날짜는 '2026-08-21' 같은 문자열이다. 부르는 쪽에서 date.today().isoformat()
+    으로 넘긴다 — **서버 시각 기준**이라는 뜻이고, 파일 방식일 때와 같다.
+    """
+    conn, pg = _connect(path)
+    with closing(conn) as conn, conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT 횟수 FROM counters WHERE 날짜 = {_ph(pg)}", (날짜,))
+        행 = cur.fetchone()
+    # max(0, ...) 는 방어다. daily_add 가 음수로 되돌릴 때 0 아래로 내려가는 것을
+    # 파이썬 쪽에서 막는다. SQL 로 막으려면 SQLite 는 max(), Postgres 는
+    # GREATEST() 라 방언이 갈린다 — 굳이 갈릴 이유가 없다.
+    return max(0, 행["횟수"] if 행 else 0)
+
+
+def daily_add(날짜, delta, path=None):
+    """그 날짜의 사용량을 delta 만큼 바꾸고 새 값을 돌려준다.
+
+    delta 는 +1 로 미리 깎고, 실패하면 -1 로 되돌리는 데 쓴다.
+    호출을 **하기 전에** 깎는 게 중요하다 — 30~60초 걸리는 분류가 도는
+    동안 다른 사람이 같은 상한을 다시 쓰는 것을 막는다.
+
+    UPSERT(INSERT ... ON CONFLICT)를 쓰지 않고 읽고-쓴다. 그 문법이
+    SQLite 와 Postgres 에서 미묘하게 달라서, 확인할 수 없는 쪽(Postgres)에서
+    틀리면 상한이 통째로 안 걸린다. **두 사람이 정확히 같은 순간에 누르면
+    한 건이 덜 세어질 수 있지만**, 파일 방식도 같은 성질이었고 이 규모에서
+    문제가 되지 않는다. 확실히 도는 쪽을 골랐다.
+    """
+    conn, pg = _connect(path)
+    q = _ph(pg)
+    with closing(conn) as conn, conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT 횟수 FROM counters WHERE 날짜 = {q}", (날짜,))
+        행 = cur.fetchone()
+        if 행 is None:
+            새값 = max(0, delta)
+            cur.execute(
+                f"INSERT INTO counters (날짜, 횟수) VALUES ({q}, {q})",
+                (날짜, 새값),
+            )
+        else:
+            새값 = max(0, 행["횟수"] + delta)
+            cur.execute(
+                f"UPDATE counters SET 횟수 = {q} WHERE 날짜 = {q}",
+                (새값, 날짜),
+            )
+    return 새값
 
 
 def load_runs(limit=100, path=None):
@@ -330,5 +395,18 @@ if __name__ == "__main__":
     print(f"  부족항목    : {json.loads(행['게이트_부족항목'])}")
 
     print(f"\n전체 {len(load_runs(path=시험))}건")
+
+    # 일일 카운터
+    오늘 = datetime.now().date().isoformat()
+    print(f"\n=== 일일 카운터 ({오늘}) ===")
+    print(f"  처음      : {daily_count(오늘, path=시험)}  (행이 없으니 0)")
+    daily_add(오늘, 1, path=시험)
+    daily_add(오늘, 1, path=시험)
+    print(f"  +1 두 번  : {daily_count(오늘, path=시험)}")
+    daily_add(오늘, -1, path=시험)
+    print(f"  -1 되돌림 : {daily_count(오늘, path=시험)}")
+    daily_add(오늘, -5, path=시험)
+    print(f"  -5 더     : {daily_count(오늘, path=시험)}  (0 아래로 안 내려가야 정상)")
+    print(f"  다른 날짜 : {daily_count('1999-01-01', path=시험)}  (0 이어야 정상)")
     시험.unlink()
     print("시험 파일 삭제 완료")

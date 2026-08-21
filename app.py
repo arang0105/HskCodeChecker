@@ -7,7 +7,6 @@ JSP 처럼 요청 하나에 응답 하나가 아니라, 매번 main() 이 처음
 st.session_state (dict 처럼 쓰는 저장소) 에 넣는다.
 """
 
-import json
 import os
 import uuid
 from datetime import date
@@ -32,7 +31,6 @@ from src import config, hsk, pipeline, search, storage  # noqa: E402  (위 설�
 세션_분류_상한 = 5
 일일_분류_상한 = 50
 세션_게이트_상한 = 15  # 되묻기만 반복하는 것도 막는다
-USAGE_FILE = config.ROOT / ".usage_daily.json"
 
 # [0-a] 카탈로그 추출은 분류 상한과 **별개로** 센다.
 # 추출은 flash 1콜이라 싸고, 초안을 다시 뽑는 게 벌칙이 되면 사용자가
@@ -104,25 +102,32 @@ def DB_준비():
 
 # ---------------------------------------------------------------- 일일 카운터
 def 일일_사용량():
-    """오늘 몇 건 분류했는지 읽는다. 날짜가 바뀌면 0부터 다시 센다."""
-    오늘 = date.today().isoformat()
+    """오늘 몇 건 분류했는지 읽는다. 날짜가 바뀌면 0부터 다시 센다.
+
+    **원래는 .usage_daily.json 파일이었다.** 배포 파일시스템이 휘발성이라
+    재배포할 때마다 상한이 0 으로 리셋됐다. CLAUDE.md 가 "상한이 유일한
+    방어선"이라고 못 박은 항목이라 기록과 같은 DB 로 옮겼다.
+
+    **DB 가 안 잡히면 0 을 돌려준다(fail-open).** 세어야 막는 건데 못 세니
+    막지 못하는 셈이라 마음에 걸리는 선택이다. 그래도 이쪽을 고른 이유 —
+    Supabase 무료 프로젝트는 7일 무접속이면 일시정지되는데, 그때 앱이
+    "오늘 상한을 다 썼습니다"로 굳어 버리면 시연에서 URL 이 죽는다.
+    막히더라도 **세션 5회 상한은 st.session_state 라서 그대로 산다.**
+    """
     try:
-        기록 = json.loads(USAGE_FILE.read_text(encoding="utf-8"))
-        if 기록.get("날짜") == 오늘:
-            return 기록.get("횟수", 0)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return 0
+        return storage.daily_count(date.today().isoformat())
+    except Exception as e:
+        print(f"[일일 카운터] 읽기 실패 — {type(e).__name__}: {e}", flush=True)
+        return 0
 
 
 def 일일_더하기(delta):
     """오늘 사용량을 delta 만큼 바꾼다. 실패했을 때 -1 로 되돌리는 데도 쓴다."""
-    값 = max(0, 일일_사용량() + delta)
-    USAGE_FILE.write_text(
-        json.dumps({"날짜": date.today().isoformat(), "횟수": 값}),
-        encoding="utf-8",
-    )
-    return 값
+    try:
+        return storage.daily_add(date.today().isoformat(), delta)
+    except Exception as e:
+        print(f"[일일 카운터] 쓰기 실패 — {type(e).__name__}: {e}", flush=True)
+        return 0
 
 
 # ---------------------------------------------------------------- 세션 상태
@@ -205,7 +210,11 @@ st.warning(
 )
 
 남은_세션 = 세션_분류_상한 - st.session_state.분류횟수
-남은_일일 = 일일_분류_상한 - 일일_사용량()
+# **이 실행에서 딱 한 번만 읽는다.** 카운터가 DB 로 가면서 읽기 한 번이
+# 곧 왕복 한 번이 됐다. 아래 사이드바도 이 변수를 쓰고, 분류가 돌면
+# 일일_더하기 가 돌려준 새 값으로 갱신한다.
+오늘_사용량 = 일일_사용량()
+남은_일일 = 일일_분류_상한 - 오늘_사용량
 
 게이트 = st.session_state.게이트
 되묻는중 = bool(게이트) and not 게이트["충분"]
@@ -579,7 +588,7 @@ if 눌림 or 강행:
 
         # 여기부터가 실제 분류다. 차감은 이 지점에서 한 번만 한다.
         st.session_state.분류횟수 += 1
-        일일_더하기(1)
+        오늘_사용량 = 일일_더하기(1)
 
         오류 = None
         first = third = fourth = None
@@ -616,7 +625,7 @@ if 눌림 or 강행:
             # 사용자에게 원인 문자열을 그대로 던지지 않는다. 화면에는 안내만,
             # 원인은 DB 에만 남긴다.
             오류 = f"{type(e).__name__}: {e}"
-            일일_더하기(-1)                      # 실패했으면 차감을 되돌린다
+            오늘_사용량 = 일일_더하기(-1)          # 실패했으면 차감을 되돌린다
             st.session_state.분류횟수 -= 1
 
         def 합(키):
@@ -726,7 +735,7 @@ with st.sidebar:
     st.markdown("##### 남은 횟수")
     st.markdown(
         f"이 브라우저 **{세션_분류_상한 - st.session_state.분류횟수} / {세션_분류_상한}**"
-        f" · 오늘 전체 **{일일_분류_상한 - 일일_사용량()} / {일일_분류_상한}**"
+        f" · 오늘 전체 **{일일_분류_상한 - 오늘_사용량} / {일일_분류_상한}**"
     )
 
     st.divider()
