@@ -204,6 +204,42 @@ def init_db(path=None):
             날짜 TEXT PRIMARY KEY,
             횟수 INTEGER NOT NULL DEFAULT 0
         )""")
+
+        # **Postgres(Supabase)에서는 표마다 RLS 를 켠다.**
+        #
+        # Supabase 는 public 스키마의 표에 anon 역할 권한을 기본으로 준다.
+        # RLS 를 안 켜면 anon key 하나로 공개 REST 경로에서 **읽기뿐 아니라
+        # 쓰기·삭제까지** 된다. 대시보드가 그런 표를 UNRESTRICTED 로 표시한다.
+        #
+        #   runs      : 사용자가 넣은 물품설명이 읽히고, 지워질 수 있다.
+        #               봉인을 다 쓴 지금 유일하게 남은 측정 채널이다
+        #   counters  : UPDATE counters SET 횟수 = 0 한 번이면 일일 상한이
+        #               무력화된다. "상한이 유일한 방어선"인데 그게 뚫린다
+        #
+        # 정책(policy)을 하나도 안 만들면 그 경로가 전부 막힌다.
+        # 우리 앱은 표를 만든 주인(postgres)으로 붙으므로 RLS 를 건너뛴다.
+        #
+        # 손으로 켜면 표를 새로 만들 때마다 잊는다. 여기서 항상 건다 —
+        # 이미 켜져 있으면 아무 일도 안 하는 명령이다.
+        # 실행은 아래 별도 트랜잭션에서 한다(이유는 그쪽 주석 참조).
+
+    if pg:
+        # **표를 만든 트랜잭션과 분리한다.**
+        # Postgres 는 트랜잭션 안에서 한 문장이 실패하면 그 트랜잭션 전체를
+        # 무효 상태로 만든다. 파이썬에서 예외를 잡아도 이미 늦어서, 같은
+        # 블록 안에 두면 RLS 한 줄 때문에 CREATE TABLE 까지 롤백된다.
+        # 표가 만들어지는 것이 먼저다.
+        for 표 in ("runs", "counters"):
+            try:
+                conn2, _ = _connect(path)
+                with closing(conn2) as conn2, conn2:
+                    conn2.cursor().execute(
+                        f"ALTER TABLE {표} ENABLE ROW LEVEL SECURITY")
+            except Exception as e:
+                # 못 걸더라도 앱은 떠야 한다. 다만 조용히 넘기지 않는다 —
+                # 안 걸린 것을 모르는 게 제일 나쁘다.
+                print(f"  RLS 설정 실패({표}) — {type(e).__name__}: {e}",
+                      flush=True)
     # 어디에 만들었는지만 돌려준다. **DATABASE_URL 자체는 절대 돌려주지 않는다** —
     # 접속 문자열에 비밀번호가 들어 있어서, 로그나 화면에 찍히면 그게 유출이다.
     return path or ("Supabase(Postgres)" if pg else DB_PATH)
