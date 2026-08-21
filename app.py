@@ -438,14 +438,17 @@ elif 결과:
         보낸 = st.session_state.setdefault(f"의견_{run_id}",
                                          {"평가": None, "메모": None})
 
-        # 묻는 말과 👍/👎 를 **같은 줄에** 둔다. 세로로 쌓으면 둘이 한 묶음으로
-        # 안 보이고, 그만큼 아래 입력칸까지 밀려 내려간다.
-        # vertical_alignment 는 열 높이가 서로 다를 때 세로 가운데로 맞춘다 —
-        # 이게 없으면 글씨와 아이콘이 윗변 기준으로 붙어 어긋나 보인다.
-        c_묻기, c_따봉 = st.columns([3, 1], vertical_alignment="center")
-        with c_묻기:
+        # 묻는 말과 👍/👎 를 **같은 줄, 바로 옆에** 둔다.
+        #
+        # st.columns([3, 1]) 로도 한 줄에 놓이긴 하지만 그건 화면을 3:1 로
+        # **쪼개는** 것이라, 아이콘이 오른쪽 끝까지 밀려 물음표와 멀어진다.
+        # st.container(horizontal=True) 는 안에 넣은 것들이 **제 너비만큼만**
+        # 차지하고 왼쪽부터 차례로 붙는다. 그래서 물음표 옆에 바로 온다.
+        #
+        # vertical_alignment="center" 가 없으면 글씨와 아이콘이 윗변 기준으로
+        # 붙어 미묘하게 어긋나 보인다.
+        with st.container(horizontal=True, vertical_alignment="center"):
             st.markdown("**이 결과가 맞았나요?**")
-        with c_따봉:
             평가 = st.feedback("thumbs", key=f"fb_{run_id}")
 
         메모 = st.text_input("한 줄 의견 (선택)", key=f"memo_{run_id}",
@@ -454,13 +457,11 @@ elif 결과:
 
         # 보내기 버튼은 입력칸 **오른쪽 끝**에 붙인다. 글을 다 쓰고 시선이
         # 멈추는 자리이고, 위쪽 [분류하기] 와 같은 위치라 규칙이 하나가 된다.
-        # 빈 열을 왼쪽에 두는 것이 Streamlit 에서 오른쪽 정렬하는 방법이다.
-        _, c_보내기 = st.columns([3, 1])
-        with c_보내기:
+        with st.container(horizontal=True, horizontal_alignment="right"):
             # type="primary" 가 테마 색을 입힌다. 기본값은 테두리만 있는 흰
             # 버튼이라 눌러야 저장된다는 게 안 보였다.
             보내기 = st.button("의견 보내기", key=f"send_{run_id}",
-                            type="primary", use_container_width=True)
+                            type="primary")
 
         새평가 = {1: "up", 0: "down"}.get(평가)
         새메모 = 메모.strip() or None
