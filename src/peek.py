@@ -96,6 +96,11 @@ def 출력(df):
     if df.empty:
         print("(해당하는 기록이 없습니다)")
         return
+    # 빈 칸을 None / NaN 으로 찍으면 눈이 거기 걸린다. "값이 없다"는 건
+    # 그냥 비워 두는 게 읽기 쉽다. (숫자 열은 문자열이 되므로 정렬은 못 쓴다 —
+    # 여기서는 눈으로 보는 게 목적이라 상관없다)
+    df = df.fillna("")
+
     # 기본값이면 긴 물품설명 하나가 표를 통째로 밀어낸다.
     with pd.option_context("display.max_columns", None,
                            "display.width", 200,
