@@ -44,6 +44,7 @@ READ_URL = os.getenv("READ_DATABASE_URL")
 요약열 = """
   id,
   to_char(시각::timestamp, 'MM-DD HH24:MI')        as 시각,
+  유입,
   입력출처,
   left(물품설명, 34)                                as 물품설명,
   case when 게이트_충분 = 0 then '되물음' end       as 게이트,
