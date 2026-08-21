@@ -34,6 +34,12 @@ from src import config, hsk, pipeline, search, storage  # noqa: E402  (위 설�
 세션_게이트_상한 = 15  # 되묻기만 반복하는 것도 막는다
 USAGE_FILE = config.ROOT / ".usage_daily.json"
 
+# [0-a] 카탈로그 추출은 분류 상한과 **별개로** 센다.
+# 추출은 flash 1콜이라 싸고, 초안을 다시 뽑는 게 벌칙이 되면 사용자가
+# 마음에 안 드는 초안을 그냥 쓰게 된다. 게이트를 따로 세는 것과 같은 이유다.
+세션_추출_상한 = 10
+카탈로그_최대_파일수 = 3
+
 예시_충분 = (
     "폴리프로필렌(PP) 재질의 일회용 도시락 용기. 뚜껑 일체형, 용량 700ml, "
     "전자레인지 사용 가능. 표면 인쇄 없음. 사출 성형품."
@@ -106,6 +112,9 @@ st.session_state.setdefault("게이트횟수", 0)
 st.session_state.setdefault("게이트", None)   # 직전 [0] 판정 결과
 st.session_state.setdefault("결과", None)     # 직전 분류 결과
 st.session_state.setdefault("이력", [])
+st.session_state.setdefault("카탈로그", None)  # 직전 [0-a] 추출 결과
+st.session_state.setdefault("초안", None)      # 입력창에 넣은 초안 {"텍스트","빠진정보"}
+st.session_state.setdefault("추출횟수", 0)
 
 
 def 세번_표기(코드):
@@ -123,6 +132,37 @@ def 예시_채우기(텍스트):
     반영되지 않는다. on_click 콜백이 그 타이밍 문제를 없애 준다.
     """
     st.session_state.입력 = 텍스트
+
+
+def 초안_채우기(텍스트, 빠진정보):
+    """카탈로그에서 뽑은 초안을 입력창에 넣는다.
+
+    예시_채우기 와 같은 이유로 on_click 콜백이다 — 버튼 안에서 그냥 대입하면
+    이미 그려진 입력창에 반영되지 않는다.
+
+    빠진정보를 함께 기억해 두는 것만 다르다. 두 군데에 쓴다.
+      1) 입력창 아래에 "이 항목은 직접 채우세요" 를 계속 띄우는 데
+      2) 분류할 때 입력출처가 '카탈로그' 인지 '카탈로그(수정)' 인지 판정하는 데
+    """
+    st.session_state.입력 = 텍스트
+    st.session_state.초안 = {"텍스트": 텍스트, "빠진정보": 빠진정보}
+
+
+def 파일_형식(f):
+    """업로드 파일의 MIME 형식을 정한다. 모르면 None.
+
+    브라우저가 알려주는 f.type 을 먼저 믿고, 비었거나 우리가 안 받는
+    형식이면 파일 이름의 확장자로 판정한다. 브라우저·OS 에 따라 f.type 이
+    빈 문자열로 오는 경우가 있어서다.
+    """
+    if f.type in pipeline.CATALOG_MIME:
+        return f.type
+    확장자 = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else ""
+    # dict 를 뒤집어 확장자 → mime 으로 찾는다. jpg 는 jpeg 와 같은 형식이다.
+    for mime, 별칭 in pipeline.CATALOG_MIME.items():
+        if 확장자 == 별칭 or (확장자 == "jpeg" and 별칭 == "jpg"):
+            return mime
+    return None
 
 
 # ---------------------------------------------------------------- 화면
@@ -147,6 +187,60 @@ st.warning(
 게이트 = st.session_state.게이트
 되묻는중 = bool(게이트) and not 게이트["충분"]
 
+# --- [0-a] 카탈로그에서 초안 뽑기 ---
+# **기본은 접힘.** 첫 화면을 깔끔하게 두려는 것이고, 측정된 경로는 여전히
+# 글로 넣는 쪽이다. 카탈로그가 있는 사람만 펼쳐서 쓴다.
+남은_추출 = 세션_추출_상한 - st.session_state.추출횟수
+뽑기 = False
+올린파일 = []
+
+with st.expander("📄 카탈로그(PDF·사진)에서 물품설명 뽑기"):
+    st.caption(
+        "제품 안내서·사양표·제품 사진을 올리면 물품설명 초안을 만들어 드립니다.  \n"
+        "**카탈로그에 없는 정보는 채우지 않습니다.** 비어 있는 항목은 따로 알려드립니다."
+    )
+    올린파일 = st.file_uploader(
+        "카탈로그 파일",
+        type=["pdf", "png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,   # 한 제품이 앞뒤 두 장에 걸칠 수 있다
+        label_visibility="collapsed",
+    ) or []
+
+    c_안내, c_뽑기 = st.columns([2, 1], vertical_alignment="center")
+    c_안내.caption(f"파일 {카탈로그_최대_파일수}개 · 합계 "
+                  f"{pipeline.CATALOG_MAX_MB}MB 까지 · 남은 횟수 "
+                  f"{남은_추출}/{세션_추출_상한}")
+    뽑기 = c_뽑기.button("카탈로그 읽기", disabled=not 올린파일 or 남은_추출 <= 0,
+                       use_container_width=True)
+
+    카탈로그 = st.session_state.카탈로그
+    if 카탈로그 and 카탈로그.get("오류"):
+        st.error(카탈로그["오류"])
+    elif 카탈로그 and 카탈로그["제품들"]:
+        제품들 = 카탈로그["제품들"]
+        if len(제품들) > 1:
+            이름 = st.selectbox(
+                "분류할 제품을 고르세요",
+                range(len(제품들)),
+                format_func=lambda i: 제품들[i]["이름"],
+            )
+            고른것 = 제품들[이름]
+        else:
+            고른것 = 제품들[0]
+            st.markdown(f"**{고른것['이름']}**")
+
+        with st.container(border=True):
+            st.markdown(고른것["물품설명"])
+        if 고른것["빠진정보"]:
+            st.markdown(":orange[카탈로그에 없어서 비워 둔 항목: "
+                        f"**{', '.join(고른것['빠진정보'])}**]")
+
+        _, c_넣기 = st.columns([2, 1])
+        c_넣기.button("이 초안을 물품설명에 넣기", type="primary",
+                     use_container_width=True,
+                     on_click=초안_채우기,
+                     args=(고른것["물품설명"], 고른것["빠진정보"]))
+
 # --- 입력 ---
 st.text_area(
     # 라벨에는 **굵게** 같은 인라인 문법만 먹는다. #### 같은 제목 문법은
@@ -157,6 +251,14 @@ st.text_area(
     placeholder="재질 · 용도 · 형태 · 구성을 적을수록 정확해집니다.\n"
                 "예) 스테인리스 진공 이중구조 보온병, 용량 500ml, 뚜껑 폴리프로필렌",
 )
+# 카탈로그 초안을 넣었으면 못 채운 항목을 **접히지 않는 자리에** 띄운다.
+# 위 상자 안에도 같은 내용이 있지만 그건 접으면 사라진다. "재질은 내가
+# 채워야 한다"는 사실이 안 보이면, 비어 있는 채로 분류가 돌아간다.
+if st.session_state.초안 and st.session_state.초안["빠진정보"]:
+    st.caption(
+        ":orange[카탈로그에 없어서 비워 둔 항목: "
+        f"**{', '.join(st.session_state.초안['빠진정보'])}** — 아시면 위에 직접 채워 주세요]"
+    )
 # 버튼 3개를 한 줄에 오른쪽 정렬로 둔다.
 # 첫 칸은 비워 두는 여백이다 — 넓게 잡을수록 버튼이 오른쪽으로 밀려
 # 입력창 오른쪽 모서리에 맞는다. _ 는 "안 쓰는 값"이라는 관례적 이름이다.
@@ -314,6 +416,68 @@ if len(st.session_state.이력) > 1:
             st.markdown(f"`{세번_표기(h['코드'])}` ({h['확신도']}) — {h['desc'][:60]}")
 
 
+# --- [0-a] 실행 ---
+# 분류 실행과 마찬가지로 **맨 아래**에서 처리한다. 위쪽 상자 안에서 바로 돌리면
+# 방금 만든 결과를 그릴 코드가 이미 지나간 뒤라 화면에 안 나온다.
+if 뽑기:
+    # **상한을 여기서 다시 검사한다.** 위의 disabled= 는 버튼이 그려질 때의
+    # 상태라 한 박자 늦다. 분류 버튼에서 6번째가 통과했던 것과 같은 자리다.
+    파일들 = []
+    문제 = None
+    합계바이트 = sum(len(f.getvalue()) for f in 올린파일)
+
+    if st.session_state.추출횟수 >= 세션_추출_상한:
+        문제 = "이 브라우저에서 카탈로그를 읽을 수 있는 횟수를 다 썼습니다."
+    elif len(올린파일) > 카탈로그_최대_파일수:
+        문제 = f"파일은 {카탈로그_최대_파일수}개까지 올릴 수 있습니다."
+    elif 합계바이트 > pipeline.CATALOG_MAX_MB * 1024 * 1024:
+        문제 = (f"파일이 너무 큽니다. 합계 {pipeline.CATALOG_MAX_MB}MB 까지 "
+              f"올릴 수 있습니다 (지금 {합계바이트 / 1048576:.1f}MB).")
+    else:
+        for f in 올린파일:
+            mime = 파일_형식(f)
+            if mime is None:
+                문제 = f"'{f.name}' 은 읽을 수 없는 형식입니다. PDF·PNG·JPG 만 됩니다."
+                break
+            파일들.append((f.getvalue(), mime))
+
+    if 문제:
+        st.session_state.카탈로그 = {"제품들": [], "오류": 문제}
+    else:
+        # 차감을 먼저 한다. 실패하면 아래에서 되돌린다.
+        st.session_state.추출횟수 += 1
+        try:
+            with st.status("카탈로그를 읽는 중...", expanded=True) as 진행:
+                st.write("① 파일에서 제품과 사양을 찾는 중")
+                r = pipeline.catalog_extract(파일들, model=config.MODEL_DEV)
+                진행.update(label="카탈로그 읽기 완료", state="complete",
+                           expanded=False)
+            if r["읽기실패"]:
+                st.session_state.추출횟수 -= 1
+                st.session_state.카탈로그 = {
+                    "제품들": [],
+                    "오류": "카탈로그에서 제품을 찾지 못했습니다. "
+                          "제품 사양이 보이는 페이지로 다시 올리거나, "
+                          "아래에 직접 입력해 주세요.",
+                }
+            else:
+                st.session_state.카탈로그 = {
+                    "제품들": r["제품들"],
+                    "오류": None,
+                    "in_tokens": r["in_tokens"],
+                    "billed_out": r["billed_out"],
+                }
+        except Exception:
+            # 원인 문자열을 화면에 그대로 던지지 않는다. 분류 전이라
+            # DB 행도 없으므로 여기서는 남길 곳이 없다.
+            st.session_state.추출횟수 -= 1
+            st.session_state.카탈로그 = {
+                "제품들": [],
+                "오류": "카탈로그를 읽는 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.",
+            }
+    st.rerun()
+
+
 # --- 실행 ---
 if 눌림 or 강행:
     desc = st.session_state.입력.strip()
@@ -418,9 +582,25 @@ if 눌림 or 강행:
             "평가": None,
         }
 
+        # 이 분류가 카탈로그에서 왔는지, 그리고 초안을 손봤는지 남긴다.
+        # 카탈로그 경로는 봉인을 다 써서 정확도를 잴 수 없으므로,
+        # "초안을 그대로 썼는가"가 추출 품질을 짐작할 유일한 단서다.
+        초안 = st.session_state.초안
+        카탈로그 = st.session_state.카탈로그 or {}
+        if not 초안:
+            출처 = "텍스트"
+        elif desc == 초안["텍스트"].strip():
+            출처 = "카탈로그"
+        else:
+            출처 = "카탈로그(수정)"
+
         결과["run_id"] = storage.save_run({
             "세션id": st.session_state.세션id,
             "물품설명": desc,
+            "입력출처": 출처,
+            "카탈로그_빠진정보": (초안 or {}).get("빠진정보", []),
+            "추출_in_tokens": 카탈로그.get("in_tokens") if 초안 else None,
+            "추출_billed_out": 카탈로그.get("billed_out") if 초안 else None,
             "게이트_충분": (게이트 or {}).get("충분", True),
             "게이트_부족항목": (게이트 or {}).get("부족항목", []),
             "게이트_질문": (게이트 or {}).get("질문", []),
