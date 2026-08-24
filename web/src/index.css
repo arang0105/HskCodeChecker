@@ -1,0 +1,4 @@
+/* Vite 기본 템플릿의 다크 테마·가운데 정렬을 쓰지 않는다. 우리 레이아웃과
+   싸운다. 필요한 것만 여기 둔다. */
+body { margin: 0; font-family: system-ui, "Malgun Gothic", sans-serif;
+  color: #222; background: #fff; line-height: 1.5; }
