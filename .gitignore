@@ -39,4 +39,5 @@ data/embeddings_1536.npy
 # 개인 학습 노트 / 백업
 메모.txt
 파이썬정리.md
+SQL정리.md
 *.bak
