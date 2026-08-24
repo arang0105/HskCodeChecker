@@ -9,11 +9,14 @@
 **같은 함수를 같은 순서로** 부른다 — 그래야 두 앱의 답이 갈리지 않는다.
 """
 
+import json
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -278,49 +281,63 @@ def 게이트(req: GateIn):
     return GateOut(충분=g["충분"], 부족항목=g["부족항목"], 질문=g["질문"])
 
 
-@app.post("/api/classify", response_model=ClassifyOut)
-def 분류(req: ClassifyIn):
-    """[1]~[4] 를 순서대로 돌리고 결과를 저장한다.
+def _분류_흐름(req):
+    """[1]~[4] 를 돌리면서 단계마다 결과를 하나씩 내놓는 **제너레이터**다.
 
-    **순서와 판단은 app.py:640-770 을 그대로 옮긴 것이다.** 여기서 새로
-    정하는 것은 없다. 두 앱이 같은 물품설명에 다른 답을 내면 안 된다.
+    yield 가 있는 함수는 값을 한 번에 돌려주고 끝나지 않는다. 부를 때마다
+    다음 값을 하나씩 내놓고 그 자리에서 멈춰 기다린다. 자바로 치면
+    Iterator 를 손으로 구현한 것과 같은데, 문법이 훨씬 짧다.
 
-    **게이트를 여기서 다시 부르지 않는다.** 프론트가 /api/gate 를 먼저 부르고
-    그 결과를 실어 보낸다. app.py 도 강행일 때 같은 이유로 재호출을 피한다.
+    **이렇게 나눈 이유** — 평범한 POST 와 SSE 가 **같은 코드**를 써야 한다.
+    두 벌로 두면 한쪽만 고쳐서 두 엔드포인트의 답이 갈리고, 그걸 알아챌
+    방법이 없다. 아래 두 함수는 이 제너레이터를 소비하는 방식만 다르다.
+
+    내놓는 것은 (종류, 값) 짝이다.
+      ("단계", {...})  진행 상황
+      ("결과", ClassifyOut)  마지막에 딱 한 번
     """
     desc = req.desc.strip()
-    if not desc:
-        raise HTTPException(status_code=400, detail="물품설명을 입력해 주세요.")
-    if 사유 := 상한_검사(req.세션id):
-        raise HTTPException(status_code=429, detail=사유)
 
-    # **차감은 이 지점에서 한 번만.** 게이트에서 되물은 건은 차감하지 않는다.
+    # **차감은 여기서 한 번만.** 게이트에서 되물은 건은 차감하지 않는다.
     일일_더하기(1)
 
     오류 = None
     first = third = fourth = None
     hits, 순위, ranked = [], [], []
+
+    def 단계(번호, 이름, 상태, 초=None):
+        d = {"번호": 번호, "이름": 이름, "상태": 상태}
+        if 초 is not None:
+            d["초"] = round(초, 1)
+        return ("단계", d)
+
     try:
-        # ① use_cache=False — 앱이 만든 항목이 측정용 후보 캐시에 섞이지 않게
-        #    한다. [1]은 flash 1콜이라 싸다.
+        yield 단계(1, "6자리 후보 3개를 뽑는 중", "시작")
+        # use_cache=False — 앱이 만든 항목이 측정용 후보 캐시에 섞이지 않게 한다.
         first = pipeline.generate_candidates(
             desc, model=config.MODEL_DEV, use_cache=False)
         후보 = first["candidates"]
         if not 후보:
             raise RuntimeError("후보를 만들지 못했습니다")
+        yield 단계(1, "6자리 후보 3개를 뽑는 중", "완료", first.get("elapsed"))
 
-        # ② 결정례 검색. 인덱스는 lifespan 에서 이미 올려 뒀다.
+        yield 단계(2, "비슷한 과거 결정례를 찾는 중", "시작")
+        t = time.time()
         hits = search.search(desc, top_k=5, index=자원["인덱스"])
+        yield 단계(2, "비슷한 과거 결정례를 찾는 중", "완료", time.time() - t)
 
-        # ③ 재정렬 — 이 단계가 이 프로젝트의 본체다. pro 를 쓴다.
+        yield 단계(3, "결정례를 근거로 순위를 다시 판단하는 중", "시작")
         third = pipeline.rerank(desc, 후보, hits, model=config.MODEL_MAIN)
         # 재정렬이 깨졌으면 1차 순서를 그대로 쓴다. 한 단계가 실패해도 답은 낸다.
         순위 = third["codes"] or [c["code"] for c in 후보]
         ranked = (third.get("data") or {}).get("ranked", [])
+        yield 단계(3, "결정례를 근거로 순위를 다시 판단하는 중", "완료",
+                  third.get("elapsed"))
 
-        # ④ 10자리 세번 확정.
+        yield 단계(4, "10자리 세번을 고르는 중", "시작")
         fourth = pipeline.finalize(desc, 순위[0], table=자원["세번표"],
                                    model=config.MODEL_DEV)
+        yield 단계(4, "10자리 세번을 고르는 중", "완료", fourth.get("elapsed"))
     except Exception as e:
         # 원인 문자열은 DB 와 로그에만. 화면에는 안내만 간다.
         오류 = f"{type(e).__name__}: {e}"
@@ -370,7 +387,7 @@ def 분류(req: ClassifyIn):
         저장실패 = type(e).__name__
         print(f"[저장] 실패 — {저장실패}", flush=True)
 
-    return ClassifyOut(
+    yield ("결과", ClassifyOut(
         run_id=run_id,
         저장실패=저장실패,
         오류="분류에 실패했습니다. 잠시 후 다시 시도해 주세요." if 오류 else None,
@@ -393,8 +410,68 @@ def 분류(req: ClassifyIn):
         자동확정=기록["자동확정"],
         elapsed=기록["elapsed"],
         남은횟수=max(0, 세션_분류_상한 - 세션_분류횟수(req.세션id)),
-    )
+    ))
 
+
+def _착수_검사(req):
+    """분류를 시작해도 되는지. 두 엔드포인트가 같은 검사를 쓴다."""
+    if not req.desc.strip():
+        raise HTTPException(status_code=400, detail="물품설명을 입력해 주세요.")
+    if 사유 := 상한_검사(req.세션id):
+        raise HTTPException(status_code=429, detail=사유)
+
+
+@app.post("/api/classify", response_model=ClassifyOut)
+def 분류(req: ClassifyIn):
+    """진행 표시 없이 결과만. **SSE 가 프록시에 막힐 때 돌아갈 자리다.**
+
+    curl 로 시험하기도 이쪽이 쉬워서 남겨 둔다.
+    """
+    _착수_검사(req)
+    결과 = None
+    for 종류, 값 in _분류_흐름(req):
+        if 종류 == "결과":
+            결과 = 값
+    return 결과
+
+
+@app.post("/api/classify/stream")
+def 분류_스트림(req: ClassifyIn):
+    """같은 일을 하면서 ①②③④ 진행을 흘려보낸다. **화면은 이쪽을 쓴다.**
+
+    분류가 26~164초 걸리는데 화면이 그 편차를 구분해 주지 못하면 사용자가
+    멈춘 줄 알고 새로고침한다. 그러면 250 req/day 를 두 번 문다.
+
+    **한계를 알고 쓴다** — 한 단계가 도는 동안에는 아무것도 안 나간다.
+    LLM 호출이 파이썬을 붙들고 있어서 그 사이에 yield 를 끼울 수 없다.
+    0단계에서 180초 침묵이 안 끊기는 것을 확인했으므로 한 단계가 그보다
+    짧으면 문제없고, 넘으면 그때 별도 스레드 + 하트비트로 바꾼다.
+    단계별 소요가 이제 이벤트에 찍히니 넘는지 아닌지 바로 보인다.
+    """
+    _착수_검사(req)
+
+    def 흐름():
+        try:
+            for 종류, 값 in _분류_흐름(req):
+                # SSE 규격 — 'event:' 로 종류, 'data:' 로 내용, 빈 줄이 끝 표시다.
+                # ensure_ascii=False 가 없으면 한글이 \uXXXX 로 나간다.
+                본문 = 값 if isinstance(값, dict) else 값.model_dump()
+                yield (f"event: {종류}\n"
+                       f"data: {json.dumps(본문, ensure_ascii=False)}\n\n")
+        except Exception as e:
+            # 스트림이 시작된 뒤에는 HTTP 상태코드를 바꿀 수 없다. 이미 200 이
+            # 나갔기 때문이다. 그래서 오류도 이벤트로 흘려보낸다.
+            print(f"[스트림] 실패 — {type(e).__name__}: {e}", flush=True)
+            yield ('event: 오류\ndata: '
+                   '{"detail": "분류에 실패했습니다."}\n\n')
+
+    return StreamingResponse(
+        흐름(),
+        media_type="text/event-stream",
+        # 중간 프록시가 응답을 모아 뒀다 한꺼번에 보내면 스트리밍이 아니게 된다.
+        # 0단계 프로브에서 이 헤더로 버퍼링 없음을 확인했다.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 @app.post("/api/feedback")
 def 피드백(req: FeedbackIn):
