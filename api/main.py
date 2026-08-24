@@ -168,6 +168,68 @@ class GateOut(BaseModel):
     질문: list[str]
 
 
+class ClassifyIn(BaseModel):
+    desc: str = Field(max_length=5000)
+    세션id: str = Field(max_length=64)
+    # 주소 뒤의 ?u=... 를 프론트가 붙여 보낸다. 링크마다 다른 값을 주면
+    # 누가 어느 경로로 들어왔는지 갈린다. 길이를 자르는 이유 — 주소는
+    # 아무나 아무 값이나 넣을 수 있다.
+    유입: str | None = Field(default=None, max_length=20)
+    # 게이트가 "부족"이라 했는데도 사용자가 그냥 진행하겠다고 누른 경우.
+    강행: bool = False
+    # **기록용으로만 받는다.** 방금 /api/gate 가 돌려준 값을 프론트가 그대로
+    # 되돌려 보낸다. 여기서 게이트를 다시 부르지 않는 이유는 app.py 와 같다 —
+    # 방금 판정한 것을 또 물으면 답이 같고 돈만 한 번 더 든다.
+    #
+    # 클라이언트가 보낸 값을 믿는 셈이지만, 이건 **집계용 기록이지 방어선이
+    # 아니다.** 실제로 막는 것은 위의 세 상한이고 그건 전부 서버가 센다.
+    게이트_충분: bool = True
+    게이트_부족항목: list[str] = []
+    게이트_질문: list[str] = []
+
+
+class 결정례Out(BaseModel):
+    참조번호: str
+    score: float
+    품명: str
+    결정세번: str
+    물품설명: str
+
+
+class RankedOut(BaseModel):
+    code: str = ""
+    reason: str | None = None
+    근거결정례: str | None = None
+
+
+class ClassifyOut(BaseModel):
+    """app.py 의 `결과` dict 와 같은 모양이다. 화면이 쓰는 것만 담았다.
+
+    카탈로그 관련 열(초안·빠진정보·추출토큰)은 뺐다 — 1차 범위가 아니다.
+    """
+    run_id: int | None = None
+    저장실패: str | None = None
+    오류: str | None = None
+
+    코드: str = ""
+    순위: list[str] = []
+    ranked: list[RankedOut] = []
+
+    확신도: str | None = None
+    확인포인트: list[str] = []
+    확정근거: str | None = None
+    확정확신도: str | None = None
+    확정확인포인트: list[str] = []
+    top근거: str | None = None
+    top결정례: str | None = None
+
+    결정례: list[결정례Out] = []
+    선택지수: int = 0
+    자동확정: bool = False
+    elapsed: float = 0.0
+    남은횟수: int = 0
+
+
 # ------------------------------------------------------------------ 엔드포인트
 @app.get("/api/health")
 def 상태():
@@ -205,3 +267,121 @@ def 게이트(req: GateIn):
 
     게이트횟수[req.세션id] = 게이트횟수.get(req.세션id, 0) + 1
     return GateOut(충분=g["충분"], 부족항목=g["부족항목"], 질문=g["질문"])
+
+
+@app.post("/api/classify", response_model=ClassifyOut)
+def 분류(req: ClassifyIn):
+    """[1]~[4] 를 순서대로 돌리고 결과를 저장한다.
+
+    **순서와 판단은 app.py:640-770 을 그대로 옮긴 것이다.** 여기서 새로
+    정하는 것은 없다. 두 앱이 같은 물품설명에 다른 답을 내면 안 된다.
+
+    **게이트를 여기서 다시 부르지 않는다.** 프론트가 /api/gate 를 먼저 부르고
+    그 결과를 실어 보낸다. app.py 도 강행일 때 같은 이유로 재호출을 피한다.
+    """
+    desc = req.desc.strip()
+    if not desc:
+        raise HTTPException(status_code=400, detail="물품설명을 입력해 주세요.")
+    if 사유 := 상한_검사(req.세션id):
+        raise HTTPException(status_code=429, detail=사유)
+
+    # **차감은 이 지점에서 한 번만.** 게이트에서 되물은 건은 차감하지 않는다.
+    일일_더하기(1)
+
+    오류 = None
+    first = third = fourth = None
+    hits, 순위, ranked = [], [], []
+    try:
+        # ① use_cache=False — 앱이 만든 항목이 측정용 후보 캐시에 섞이지 않게
+        #    한다. [1]은 flash 1콜이라 싸다.
+        first = pipeline.generate_candidates(
+            desc, model=config.MODEL_DEV, use_cache=False)
+        후보 = first["candidates"]
+        if not 후보:
+            raise RuntimeError("후보를 만들지 못했습니다")
+
+        # ② 결정례 검색. 인덱스는 lifespan 에서 이미 올려 뒀다.
+        hits = search.search(desc, top_k=5, index=자원["인덱스"])
+
+        # ③ 재정렬 — 이 단계가 이 프로젝트의 본체다. pro 를 쓴다.
+        third = pipeline.rerank(desc, 후보, hits, model=config.MODEL_MAIN)
+        # 재정렬이 깨졌으면 1차 순서를 그대로 쓴다. 한 단계가 실패해도 답은 낸다.
+        순위 = third["codes"] or [c["code"] for c in 후보]
+        ranked = (third.get("data") or {}).get("ranked", [])
+
+        # ④ 10자리 세번 확정.
+        fourth = pipeline.finalize(desc, 순위[0], table=자원["세번표"],
+                                   model=config.MODEL_DEV)
+    except Exception as e:
+        # 원인 문자열은 DB 와 로그에만. 화면에는 안내만 간다.
+        오류 = f"{type(e).__name__}: {e}"
+        print(f"[분류] 실패 — {오류}", flush=True)
+        일일_더하기(-1)          # 실패했으면 차감을 되돌린다
+
+    def 합(키):
+        """세 단계의 토큰·시간을 더한다. 없는 단계는 0 으로 친다."""
+        return sum((x or {}).get(키, 0) for x in (first, third, fourth))
+
+    d3 = (third.get("data") or {}) if third else {}
+    d4 = (fourth.get("data") or {}) if fourth else {}
+
+    기록 = {
+        "세션id": req.세션id,
+        "유입": req.유입,
+        "물품설명": desc,
+        "입력출처": "텍스트",      # 카탈로그 경로는 1차 범위가 아니다
+        "게이트_충분": req.게이트_충분,
+        "게이트_부족항목": req.게이트_부족항목,
+        "게이트_질문": req.게이트_질문,
+        "강행": req.강행,
+        "후보1차": [c["code"] for c in (first or {}).get("candidates", [])],
+        "검색결과": [{"참조번호": h["참조번호"], "score": round(h["score"], 4)}
+                   for h in hits],
+        "재정렬": 순위,
+        "확신도": d3.get("confidence"),
+        "확인포인트": d3.get("check_points", []),
+        "최종10자리": (fourth or {}).get("code", ""),
+        "확정근거": d4.get("reason"),
+        "확정확신도": d4.get("confidence"),
+        "선택지수": (fourth or {}).get("선택지수", 0),
+        "자동확정": (fourth or {}).get("auto", False),
+        "모델_재정렬": config.MODEL_MAIN,
+        "elapsed": round(합("elapsed"), 1),
+        "in_tokens": 합("in_tokens"),
+        "billed_out": 합("billed_out"),
+        "오류": 오류,
+    }
+
+    # **저장 실패가 분류 결과를 지우면 안 된다.** 여기까지 오는 데 pro 1콜을
+    # 썼다. 기록은 부가 기능, 답이 본체다.
+    run_id = 저장실패 = None
+    try:
+        run_id = storage.save_run(기록)
+    except Exception as e:
+        저장실패 = type(e).__name__
+        print(f"[저장] 실패 — {저장실패}", flush=True)
+
+    return ClassifyOut(
+        run_id=run_id,
+        저장실패=저장실패,
+        오류="분류에 실패했습니다. 잠시 후 다시 시도해 주세요." if 오류 else None,
+        코드=기록["최종10자리"],
+        순위=순위,
+        ranked=[RankedOut(**r) for r in ranked if isinstance(r, dict)],
+        확신도=기록["확신도"],
+        확인포인트=기록["확인포인트"],
+        확정근거=기록["확정근거"],
+        확정확신도=기록["확정확신도"],
+        확정확인포인트=d4.get("check_points", []),
+        top근거=ranked[0].get("reason") if ranked else None,
+        top결정례=ranked[0].get("근거결정례") if ranked else None,
+        결정례=[
+            결정례Out(참조번호=h["참조번호"], score=h["score"], 품명=h["품명"],
+                    결정세번=h["결정세번"], 물품설명=h["물품설명"][:400])
+            for h in hits
+        ],
+        선택지수=기록["선택지수"],
+        자동확정=기록["자동확정"],
+        elapsed=기록["elapsed"],
+        남은횟수=max(0, 세션_분류_상한 - 세션_분류횟수(req.세션id)),
+    )
