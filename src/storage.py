@@ -308,19 +308,36 @@ def save_run(row, path=None):
         return cur.lastrowid
 
 
-def save_feedback(run_id, 평가, 메모=None, path=None):
-    """나중에 눌린 👍/👎 를 그 행에 채운다.
+def save_feedback(run_id, 평가, 메모=None, path=None, 세션id=None):
+    """나중에 눌린 👍/👎 를 그 행에 채운다. 고친 행 수를 돌려준다.
 
     이것 때문에 파일 append 가 아니라 DB 여야 한다. 이미 쓴 줄을 고쳐야 하는데,
     CSV 에 한 줄 덧붙이는 방식으로는 못 한다.
+
+    **평가와 메모를 한꺼번에 덮어쓴다.** 하나만 넘기면 다른 하나가 지워지므로,
+    부르는 쪽이 두 값을 다 들고 있어야 한다(app.py 가 session_state 에 기억해 둔다).
+
+    세션id 를 주면 **그 브라우저가 만든 행일 때만** 고친다.
+    run_id 가 1, 2, 3… 연번이라 남의 번호를 찍어 넣을 수 있는데, 공개 URL 에
+    인증이 없다. 봉인 2회를 다 써서 남은 측정 채널이 이 👍/👎 하나뿐이라
+    아무나 덮어쓸 수 있게 두면 그 채널이 못 쓰게 된다.
+
+    Streamlit 앱(app.py)은 이 인자를 넘기지 않는다. 기본값 None 이면 예전처럼
+    id 만 보고 고친다 — 동작이 바뀌지 않는다.
     """
     conn, pg = _connect(path)
     q = _ph(pg)
+    sql = f"UPDATE runs SET 평가 = {q}, 평가메모 = {q} WHERE id = {q}"
+    값 = [평가, 메모, run_id]
+    if 세션id is not None:
+        sql += f" AND 세션id = {q}"
+        값.append(세션id)
     with closing(conn) as conn, conn:
-        conn.cursor().execute(
-            f"UPDATE runs SET 평가 = {q}, 평가메모 = {q} WHERE id = {q}",
-            (평가, 메모, run_id),
-        )
+        cur = conn.cursor()
+        cur.execute(sql, 값)
+        # rowcount 는 방금 UPDATE 가 몇 행을 고쳤는지다. 0 이면 그런 id 가
+        # 없거나 남의 것이라는 뜻이다. JDBC 의 executeUpdate 반환값과 같다.
+        return cur.rowcount
 
 
 def daily_count(날짜, path=None):

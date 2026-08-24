@@ -188,6 +188,15 @@ class ClassifyIn(BaseModel):
     게이트_질문: list[str] = []
 
 
+class FeedbackIn(BaseModel):
+    run_id: int
+    세션id: str = Field(max_length=64)
+    # 'up' / 'down' / None. None 은 "평가를 지운다"가 아니라 "메모만 보낸다"이다 —
+    # 아래 주석 참조.
+    평가: str | None = None
+    메모: str | None = Field(default=None, max_length=500)
+
+
 class 결정례Out(BaseModel):
     참조번호: str
     score: float
@@ -385,3 +394,35 @@ def 분류(req: ClassifyIn):
         elapsed=기록["elapsed"],
         남은횟수=max(0, 세션_분류_상한 - 세션_분류횟수(req.세션id)),
     )
+
+
+@app.post("/api/feedback")
+def 피드백(req: FeedbackIn):
+    """👍/👎 와 한 줄 의견을 그 행에 채운다.
+
+    **평가와 메모를 한꺼번에 덮어쓴다.** storage.save_feedback 이 두 열을
+    같이 UPDATE 하기 때문이다. 그래서 프론트는 **둘 다 매번 보내야 한다** —
+    👍 만 다시 누를 때도 이미 쓴 메모를 함께 실어 보내지 않으면 메모가 지워진다.
+    Streamlit 은 session_state 에 기억해 두는 방식으로 같은 일을 하고 있다.
+
+    **세션id 를 함께 넘겨 그 브라우저가 만든 행만 고치게 한다.** run_id 가
+    연번이라 남의 번호를 찍어 넣을 수 있는데, 공개 URL 에 인증이 없다.
+    """
+    if req.평가 not in (None, "up", "down"):
+        raise HTTPException(status_code=400, detail="평가 값이 올바르지 않습니다.")
+
+    메모 = (req.메모 or "").strip() or None
+
+    try:
+        고친행 = storage.save_feedback(
+            req.run_id, req.평가, 메모, 세션id=req.세션id)
+    except Exception as e:
+        print(f"[피드백] 저장 실패 — {type(e).__name__}", flush=True)
+        raise HTTPException(status_code=502, detail="저장하지 못했습니다. 잠시 뒤 다시 눌러 주세요.")
+
+    if not 고친행:
+        # 없는 번호이거나 남의 것이다. 둘을 **구분해서 알려주지 않는다** —
+        # 구분해 주면 어느 번호가 존재하는지 훑어볼 수 있다.
+        raise HTTPException(status_code=404, detail="해당 결과를 찾을 수 없습니다.")
+
+    return {"ok": True, "평가": req.평가, "메모": 메모}
