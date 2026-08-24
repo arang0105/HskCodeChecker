@@ -11,6 +11,7 @@
 
 import json
 import os
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -21,6 +22,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src import config, hsk, pipeline, search, storage
+
+# **로그 출력을 UTF-8 로 고정한다. 이걸 빼면 앱이 죽는다.**
+#
+# 2026-08-24 에 실제로 겪은 일 — 윈도우에서 파이썬의 기본 출력 인코딩은
+# cp949 다. 아래 print 문들의 '—'(em dash) 를 cp949 가 표현하지 못해
+# UnicodeEncodeError 가 났는데, 하필 그게 **except 블록 안**이라서
+# 오류를 처리하다 오류가 났다. 그러면 save_run 도 못 하고 결과 이벤트도
+# 못 내보내서 화면이 영원히 '분류 중'으로 남는다.
+#
+# 세 곳이 같은 이유로 연달아 터졌다(llm.py 의 재시도 안내, 여기 두 곳).
+# sys.stdout 은 프로세스 전체가 공유하는 하나이므로, 진입점인 여기서 한 번
+# 바꿔 두면 src/ 쪽 print 도 같이 고쳐진다.
+#
+# Render(리눅스)는 기본이 UTF-8 이라 배포에서는 안 났을 문제다. 그래도
+# 로컬에서 못 돌면 고칠 수가 없다. src/peek.py 가 같은 처리를 하고 있다.
+for 스트림 in (sys.stdout, sys.stderr):
+    # 파이프로 넘길 때 reconfigure 가 없는 객체일 수 있어 확인하고 부른다.
+    if hasattr(스트림, "reconfigure"):
+        스트림.reconfigure(encoding="utf-8")
 
 # 상한 — app.py 와 같은 값이다. 공개 URL + 인증 없음 + 내 API 키이므로
 # 이게 유일한 방어선이다(CLAUDE.md 보안).
