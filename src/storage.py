@@ -375,6 +375,35 @@ def daily_add(날짜, delta, path=None):
     return 새값
 
 
+def session_count(세션id, path=None):
+    """그 브라우저가 지금까지 분류한 건수. 세션 상한(5회)을 세는 데 쓴다.
+
+    **Streamlit 앱은 이 함수가 필요 없다.** 거기서는 st.session_state 에
+    분류횟수를 들고 있으면 됐다 — 서버가 세션을 메모리에 붙들고 있기 때문이다.
+    FastAPI 에는 그런 게 없다. 브라우저가 만든 익명 uuid4 를 매 요청에 실어
+    보내면, 서버는 그 값으로 runs 표를 세는 수밖에 없다.
+
+    **오류로 끝난 건은 빼고 센다.** app.py 가 실패했을 때 분류횟수를 1 되돌리는
+    것과 같은 처리다(app.py:673). 안 빼면 서버가 죽어서 못 받은 답 때문에
+    사용자가 남은 횟수를 잃는다.
+
+    우회할 수 있는 방어라는 것을 알고 쓴다 — 브라우저 저장소를 지우면 새 uuid
+    가 생긴다. 다만 그건 Streamlit 도 마찬가지였고(세션 초기화), 진짜 방어선은
+    일일 상한이며 그건 DB 에 있다.
+    """
+    conn, pg = _connect(path)
+    with closing(conn) as conn, conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT count(*) AS n FROM runs WHERE 세션id = {_ph(pg)} "
+            f"AND 오류 IS NULL",
+            (세션id,),
+        )
+        행 = cur.fetchone()
+    # sqlite3.Row 와 psycopg2 의 RealDictRow 둘 다 이름으로 꺼낼 수 있다.
+    return 행["n"] if 행 else 0
+
+
 def load_runs(limit=100, path=None):
     """최근 기록을 새 것부터 돌려준다. 확인용이다.
 
