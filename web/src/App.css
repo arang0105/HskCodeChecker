@@ -23,6 +23,11 @@ button.고름 { border-color: #333; background: #eee; }
 
 .경고 { border-left: 3px solid #c33; background: #fdf0f0;
   padding: 8px 12px; margin: 12px 0; }
+/* 확신도 안내. app.py 의 st.success / st.error 와 같은 색 구분이다.
+   `.경고.높음` 은 띄어쓰기 없이 붙여 쓴다 — 띄우면 "경고 안에 있는 높음"이라는
+   뜻이 되어 안 걸린다. 두 class 를 함께 가진 요소를 고르는 문법이다.
+   초록이라고 "안전"이라는 뜻은 아니다. 그건 문구 쪽이 말한다. */
+.경고.높음 { border-left-color: #383; background: #f2f7f2; }
 .되물음 { border-left: 3px solid #e90; background: #fff8e8;
   padding: 8px 12px; margin: 12px 0; }
 .되물음 ul { margin: 8px 0; padding-left: 20px; }
