@@ -1,51 +1,204 @@
-/* Streamlit 기본 컴포넌트만 쓰던 것과 같은 원칙 — 꾸미지 않는다.
-   읽히는 데 필요한 것만 둔다. */
+/* 화면은 여전히 하나다. 구조를 늘리지 않고 색·라운드·여백·그림자만으로 만든다.
+   이미지 에셋이 없고, 스크롤 애니메이션 라이브러리는 CLAUDE.md 가 금지한 쪽이다. */
 
-.쪽 { max-width: 720px; margin: 0 auto; padding: 24px 16px 80px; }
-h1 { font-size: 1.4rem; margin-bottom: 4px; }
-.설명 { color: #666; font-size: 0.9rem; margin-top: 0; }
+/* :root 는 문서 최상위 요소(html)를 가리킨다. 여기에 --이름: 값 을 적어 두면
+   아래 어디서든 var(--이름) 으로 꺼내 쓴다. **색을 한 곳에서 고치려는 것**이다 —
+   자바로 치면 상수 모음 클래스에 가깝다. */
+:root {
+  --주색: #3358ff;
+  --주색진: #2442cc;
+  --주색연: #eef1ff;
+  --글자: #14161c;
+  --흐림: #5c6376;
+  --테두리: #e4e7ef;
+  --연바탕: #f7f8fc;
 
-textarea, input { width: 100%; box-sizing: border-box; padding: 8px;
-  font: inherit; border: 1px solid #ccc; border-radius: 4px; }
-textarea:disabled, input:disabled, button:disabled { opacity: 0.5; }
+  --초록: #1f8a4c;  --초록연: #edf7f1;
+  --빨강: #d13b3b;  --빨강연: #fdf1f1;
+  --노랑: #b8730a;  --노랑연: #fff7e6;
 
-.줄 { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
-button { padding: 8px 16px; font: inherit; cursor: pointer;
-  border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+  --R: 14px;        /* 보통 라운드 */
+  --R크: 26px;      /* 카드·히어로처럼 큰 면 */
+  --그림자: 0 1px 2px rgba(20, 22, 28, .04), 0 10px 30px rgba(20, 22, 28, .07);
+}
+
+.쪽 { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+
+/* ── 상단 띠 ─────────────────────────────────────────────
+   히어로(파란 면) 위에 흰 알약이 떠 있는 모양이다. */
+.띠 { padding: 18px 20px 0; }
+.띠속 {
+  max-width: 760px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  background: #fff; border-radius: 999px; padding: 12px 14px 12px 22px;
+  box-shadow: 0 6px 20px rgba(10, 20, 60, .12);
+  /* **글자색을 되돌린다.** 이 알약은 .히어로 안에 있어서 color: #fff 를
+     물려받는다. 흰 배경에 흰 글자가 되어 로고가 안 보였다. */
+  color: var(--글자);
+}
+.로고 { font-weight: 600; font-size: 0.95rem; display: flex;
+  align-items: center; gap: 9px; }
+.점 { width: 9px; height: 9px; border-radius: 50%;
+  background: var(--주색); display: inline-block; }
+.띠링크 { color: #fff; background: var(--주색); text-decoration: none;
+  font-size: 0.85rem; font-weight: 500; padding: 8px 16px;
+  border-radius: 999px; }
+.띠링크:hover { background: var(--주색진); }
+
+/* ── 히어로 ──────────────────────────────────────────────
+   아래쪽 두 모서리만 둥글려 흰 본문 위에 얹힌 판처럼 보이게 한다. */
+.히어로 {
+  background: var(--주색); color: #fff;
+  border-radius: 0 0 var(--R크) var(--R크);
+  padding-bottom: 56px;
+  /* 점 격자. radial-gradient 로 점 하나를 그리고 background-size 로 타일처럼
+     반복시킨다. 이미지 파일 없이 무늬를 만드는 흔한 방법이다. */
+  background-image: radial-gradient(rgba(255, 255, 255, .16) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.히어로속 { padding-top: 56px; }
+.히어로 h1 {
+  font-size: clamp(2rem, 5.5vw, 3rem);   /* 화면 폭에 따라 최소~최대 사이에서 변한다 */
+  line-height: 1.2; font-weight: 700; letter-spacing: -0.02em;
+  margin: 0 0 16px;
+}
+.히어로 .설명 { font-size: 1.05rem; color: rgba(255, 255, 255, .88);
+  max-width: 40em; margin: 0 0 28px; }
+
+.숫자들 { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.숫자 {
+  background: rgba(255, 255, 255, .13); border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: var(--R); padding: 12px 18px; min-width: 132px;
+}
+.숫자 b { display: block; font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
+.숫자 span { font-size: 0.8rem; color: rgba(255, 255, 255, .78); }
+
+/* **이 단서를 빼지 않는다.** 56.7% 는 협의회 사례 30건에서 잰 값이라
+   실무 평균이 아니다. 숫자만 크게 걸고 조건을 감추면 README 가 그렇게
+   조심해서 쓴 이유가 없어진다. */
+.단서 { font-size: 0.8rem; color: rgba(255, 255, 255, .7);
+  max-width: 44em; margin: 0 0 28px; }
+
+.큰버튼 {
+  display: inline-block; background: #0f1116; color: #fff;
+  text-decoration: none; font-weight: 600; font-size: 0.95rem;
+  padding: 14px 30px; border-radius: 999px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .22);
+}
+.큰버튼:hover { background: #000; }
+
+/* ── 도구 ────────────────────────────────────────────── */
+.도구 { padding: 44px 0 100px; }
+.도구제목 { font-size: 1.15rem; font-weight: 600; margin: 0 0 14px; }
+
+textarea, input {
+  width: 100%; font: inherit; color: inherit;
+  padding: 14px; border: 1px solid var(--테두리); border-radius: var(--R);
+  background: #fff; line-height: 1.6;
+}
+textarea { resize: vertical; }
+textarea:focus, input:focus {
+  outline: none; border-color: var(--주색);
+  /* 테두리 밖에 옅은 링을 하나 더 그린다. 레이아웃을 밀지 않는다. */
+  box-shadow: 0 0 0 3px var(--주색연);
+}
+textarea:disabled, input:disabled, button:disabled { opacity: 0.55; }
+
+.줄 { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
+button {
+  font: inherit; font-weight: 600; cursor: pointer;
+  padding: 12px 26px; border: 0; border-radius: 999px;
+  background: var(--주색); color: #fff;
+}
+button:hover:not(:disabled) { background: var(--주색진); }
 button:disabled { cursor: not-allowed; }
-button.고름 { border-color: #333; background: #eee; }
-.남은 { color: #666; font-size: 0.85rem; }
+.남은 { color: var(--흐림); font-size: 0.85rem; }
 
 /* 처리 중 화면 전체를 덮는다. position: fixed 라 스크롤해도 따라온다.
    z-index 를 크게 줘야 아래 요소들 위에 온다. */
-.덮개 { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,0.04);
-  cursor: wait; }
+.덮개 { position: fixed; inset: 0; z-index: 10;
+  background: rgba(20, 22, 28, .05); cursor: wait; }
 
-.경고 { border-left: 3px solid #c33; background: #fdf0f0;
-  padding: 8px 12px; margin: 12px 0; }
-/* 확신도 안내. app.py 의 st.success / st.error 와 같은 색 구분이다.
-   `.경고.높음` 은 띄어쓰기 없이 붙여 쓴다 — 띄우면 "경고 안에 있는 높음"이라는
+/* ── 알림 상자 ───────────────────────────────────────── */
+.경고, .되물음 {
+  border-radius: var(--R); padding: 14px 18px; margin: 16px 0;
+  border-left: 4px solid var(--빨강); background: var(--빨강연);
+}
+/* `.경고.높음` 은 띄어쓰기 없이 붙여 쓴다 — 띄우면 "경고 안에 있는 높음"이라는
    뜻이 되어 안 걸린다. 두 class 를 함께 가진 요소를 고르는 문법이다.
    초록이라고 "안전"이라는 뜻은 아니다. 그건 문구 쪽이 말한다. */
-.경고.높음 { border-left-color: #383; background: #f2f7f2; }
-.되물음 { border-left: 3px solid #e90; background: #fff8e8;
-  padding: 8px 12px; margin: 12px 0; }
-.되물음 ul { margin: 8px 0; padding-left: 20px; }
+.경고.높음 { border-left-color: var(--초록); background: var(--초록연); }
+.되물음 { border-left-color: var(--노랑); background: var(--노랑연); }
+.되물음 ul { margin: 10px 0; padding-left: 20px; }
+.되물음 button { margin-top: 6px; background: var(--노랑); }
+.되물음 button:hover:not(:disabled) { background: #965e08; }
 
-.진행 { margin: 16px 0; font-family: monospace; line-height: 1.9; }
-.진행 .전 { color: #bbb; }
-.진행 .중 { color: #06c; font-weight: bold; }
-.진행 .끝 { color: #383; }
-.초 { color: #888; font-weight: normal; }
+/* ── 진행 ────────────────────────────────────────────── */
+.진행 {
+  margin: 20px 0; padding: 18px 20px;
+  background: var(--연바탕); border-radius: var(--R크);
+  font-size: 0.92rem; line-height: 2.1;
+}
+.진행 .전 { color: #b6bbc9; }
+.진행 .중 { color: var(--주색); font-weight: 600; }
+.진행 .끝 { color: var(--초록); }
+.초 { color: var(--흐림); font-weight: 400; }
 
-.결과 { margin-top: 24px; border-top: 1px solid #ddd; padding-top: 16px; }
-.코드 { font-size: 2rem; font-family: monospace; letter-spacing: 1px; }
-.확신도 { color: #666; font-size: 0.9rem; margin-bottom: 12px; }
-.근거 { background: #f7f7f7; padding: 8px 12px; border-radius: 4px; }
-.확인 ul { margin: 4px 0; padding-left: 20px; }
-.사례 { border-top: 1px solid #eee; padding: 6px 0; font-size: 0.9rem; }
-.사례품명 { color: #666; }
+/* ── 결과 ────────────────────────────────────────────── */
+.결과 {
+  margin-top: 28px; background: #fff;
+  border: 1px solid var(--테두리); border-radius: var(--R크);
+  box-shadow: var(--그림자); padding: 28px;
+}
+.코드 {
+  font-size: 2.4rem; font-weight: 700; letter-spacing: 0.04em;
+  line-height: 1.15; color: var(--글자);
+}
+.확신도 { color: var(--흐림); font-size: 0.88rem; margin-bottom: 16px; }
+.근거 {
+  background: var(--연바탕); padding: 14px 18px;
+  border-radius: var(--R); margin: 12px 0;
+}
+.근거 b { color: var(--주색); font-size: 0.85rem;
+  letter-spacing: 0.02em; }
+.확인 { margin-top: 18px; }
+.확인 b { font-size: 0.9rem; }
+.확인 ul { margin: 6px 0; padding-left: 20px; }
 
-.피드백 { margin-top: 24px; border-top: 1px solid #ddd; padding-top: 12px; }
-.피드백 input { margin: 8px 0; }
-.보냄 { color: #383; font-size: 0.85rem; margin-left: 8px; }
+details { margin-top: 16px; }
+summary { cursor: pointer; font-size: 0.9rem; color: var(--주색);
+  font-weight: 500; }
+.사례 { border-top: 1px solid #f0f1f6; padding: 10px 0; font-size: 0.9rem; }
+.사례품명 { color: var(--흐림); }
+
+/* ── 피드백 ──────────────────────────────────────────── */
+.피드백 { margin-top: 24px; border-top: 1px solid var(--테두리);
+  padding-top: 18px; }
+.피드백 .줄 button {
+  background: #fff; color: var(--글자); border: 1px solid var(--테두리);
+  padding: 8px 18px; font-size: 1.05rem;
+}
+.피드백 .줄 button:hover:not(:disabled) { background: var(--연바탕); }
+.피드백 .줄 button.고름 { border-color: var(--주색);
+  background: var(--주색연); }
+.피드백 input { margin: 10px 0; }
+.보냄 { color: var(--초록); font-size: 0.85rem; }
+
+/* ── 좁은 화면 ───────────────────────────────────────────
+   @media 는 "화면 폭이 이 조건일 때만 아래 규칙을 쓴다"는 뜻이다.
+   기본 규칙을 좁은 쪽에 맞추고 넓을 때 늘리는 방식(mobile first)도 있지만,
+   여기서는 이미 넓은 화면 기준으로 다 짜 놨으므로 예외만 덧붙인다.
+
+   숫자 카드 세 개는 min-width 132px + gap 12px 라 폭이 좁아지면
+   flex-wrap 이 알아서 줄을 바꾼다 — 따로 손대지 않는다. */
+@media (max-width: 520px) {
+  .띠 { padding: 12px 14px 0; }
+  .띠속 { padding: 10px 10px 10px 16px; }
+  .로고 { font-size: 0.82rem; }
+  .히어로속 { padding-top: 40px; }
+  .히어로 { padding-bottom: 40px; }
+  .쪽 { padding: 0 16px; }
+  .결과 { padding: 22px 18px; }
+  .코드 { font-size: 1.9rem; }
+  .도구 { padding: 32px 0 72px; }
+}

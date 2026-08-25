@@ -5,6 +5,24 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HS코드 분류 검증 보조</title>
+
+    <!--
+      웹폰트. preconnect 두 줄은 "이 서버에 곧 붙을 거니 미리 연결해 둬라"는
+      귀띔이다 — 없어도 되지만 첫 글자가 뜨는 시각이 빨라진다.
+
+      Poppins 에는 한글이 없다. 브라우저는 **글자마다** 폰트를 따로 고르므로
+      숫자·영문만 Poppins 가 되고 한글은 다음 차례인 Noto Sans KR 로 떨어진다.
+      HS 코드가 숫자라 이 조합이 잘 맞는다.
+
+      display=swap 은 "폰트 받는 동안 기본 글꼴로 먼저 보여줘라"는 뜻이다.
+      빼면 폰트가 도착할 때까지 글자가 안 보인다.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <div id="root"></div>

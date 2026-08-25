@@ -124,17 +124,51 @@ export default function App() {
   const 되물음 = 게이트 !== null && !게이트.충분 && 결과 === null;
 
   return (
-    <div className="쪽">
-      <h1>HS코드 분류 검증 보조</h1>
-      <p className="설명">
-        물품설명을 넣으면 6자리 후보를 뽑고, 비슷한 과거 결정례를 근거로
-        순위를 다시 매긴 뒤 10자리 세번을 고릅니다.
-      </p>
-
+    // <> </> 는 Fragment 다. JSX 는 최상위 요소가 하나여야 하는데, 그것 때문에
+    // 의미 없는 <div> 를 하나 더 두고 싶지 않을 때 쓴다. 화면에는 안 남는다.
+    <>
       {/* 처리 중에는 화면 전체를 덮어 다른 데를 못 만지게 한다.
           Streamlit 은 rerun 도는 동안 위젯을 알아서 잠가 줬는데,
           React 로 옮기면 그 공짜가 사라진다. */}
       {처리중 && <div className="덮개" />}
+
+      <section className="히어로">
+        <header className="띠">
+          <div className="띠속">
+            <span className="로고"><span className="점" />HS코드 분류 검증 보조</span>
+            <a className="띠링크" target="_blank" rel="noreferrer"
+               href="https://github.com/arang0105/HskCodeChecker">GitHub</a>
+          </div>
+        </header>
+
+        <div className="쪽 히어로속">
+          <h1>HS 세번을,<br />근거와 함께.</h1>
+          <p className="설명">
+            물품설명을 넣으면 과거 결정례 5,872건에서 비슷한 사례를 찾아
+            6자리 후보의 순위를 다시 매기고, 관세청 공식 목록에서 10자리를 고릅니다.
+          </p>
+
+          <div className="숫자들">
+            <div className="숫자"><b>56.7%</b><span>6자리 정답률</span></div>
+            <div className="숫자"><b>50.0%</b><span>10자리 정답률</span></div>
+            <div className="숫자"><b>5,872</b><span>참고 결정례</span></div>
+          </div>
+
+          {/* **이 문장을 빼지 않는다.** 저 숫자는 협의회 사례 30건에서 잰
+              값이지 실무 평균이 아니다. 조건을 감추면 README 가 그렇게
+              조심해서 쓴 이유가 없어진다. */}
+          <p className="단서">
+            정답률은 전문가끼리도 판단이 갈려 협의회에 올라간 사례 30건에서 잰
+            값입니다. 만드는 동안 한 번도 열어보지 않은 시험 문제이고,
+            쉬운 건에서는 6자리 85.0% / 10자리 80.0% 였습니다.
+          </p>
+
+          <a className="큰버튼" href="#도구">바로 써보기</a>
+        </div>
+      </section>
+
+      <main className="쪽 도구" id="도구">
+      <p className="도구제목">물품설명 넣기</p>
 
       <textarea
         value={desc}
@@ -185,7 +219,8 @@ export default function App() {
         평가={평가} set평가={set평가}
         메모={메모} set메모={set메모}
         보냈다={보냈다} 보내기={의견보내기} />}
-    </div>
+      </main>
+    </>
   );
 }
 

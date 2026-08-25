@@ -1,4 +1,18 @@
 /* Vite 기본 템플릿의 다크 테마·가운데 정렬을 쓰지 않는다. 우리 레이아웃과
-   싸운다. 필요한 것만 여기 둔다. */
-body { margin: 0; font-family: system-ui, "Malgun Gothic", sans-serif;
-  color: #222; background: #fff; line-height: 1.5; }
+   싸운다. 여기에는 문서 전체에 걸리는 것만 두고, 화면 요소는 App.css 에 둔다. */
+
+body {
+  margin: 0;
+  /* Poppins 에는 한글이 없다. 브라우저가 글자마다 폰트를 따로 고르므로
+     숫자·영문만 Poppins 가 되고 한글은 Noto Sans KR 로 떨어진다. */
+  font-family: "Poppins", "Noto Sans KR", system-ui, "Malgun Gothic", sans-serif;
+  color: #14161c;
+  background: #fff;
+  line-height: 1.6;
+  /* 글자가 조금 얇고 또렷해진다. 굵은 제목이 많아 이게 있는 편이 낫다. */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* padding 을 width 에 포함시킨다. 이게 없으면 textarea 에 padding 을 줄 때마다
+   부모 밖으로 삐져나간다 — 요즘 CSS 를 쓰는 거의 모든 곳이 이 한 줄을 깐다. */
+*, *::before, *::after { box-sizing: border-box; }
