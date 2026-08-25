@@ -161,6 +161,7 @@ def 세션_분류횟수(세션id):
 # 게이트는 flash 1콜이라 싸고, 비싼 쪽(분류)은 DB 로 센다.
 게이트횟수 = {}
 추출횟수 = {}
+끊김보고 = {}
 
 
 def 파일_형식(f: UploadFile):
@@ -238,6 +239,16 @@ class ClassifyIn(BaseModel):
     # 틀린 값이 와도 집계가 조금 흐려질 뿐이다. 아는 값이 아니면 '텍스트'로 친다.
     입력출처: str = Field(default="텍스트", max_length=20)
     카탈로그_빠진정보: list[str] = []
+
+
+class DroppedIn(BaseModel):
+    """화면이 결과를 못 받고 끝났다고 알려 오는 내용."""
+    세션id: str = Field(max_length=64)
+    desc: str = Field(default="", max_length=5000)
+    # 마지막으로 '완료' 이벤트를 받은 단계 번호. 0 이면 하나도 못 받았다는 뜻이다.
+    단계: int = 0
+    경과: float = 0.0
+    사유: str = Field(default="", max_length=200)
 
 
 class 제품Out(BaseModel):
@@ -454,6 +465,17 @@ def _분류_흐름(req):
     # **차감은 여기서 한 번만.** 게이트에서 되물은 건은 차감하지 않는다.
     일일_더하기(1)
 
+    # **착수를 남긴다.** 지금까지 print 는 전부 실패만 찍었다. 그래서 화면이
+    # "연결이 끊겼습니다" 를 띄웠을 때 요청이 서버에 닿기는 했는지조차
+    # 알 수 없었다 — runs 에는 끝까지 간 건만 들어가기 때문이다.
+    #
+    # 착수만 있고 완료가 없으면 처리 중에 죽은 것이고, 착수조차 없으면
+    # 요청이 안 닿은 것이다. 그 갈림길이 이 두 줄로 갈린다.
+    #
+    # **세션id 는 앞 8자만 찍는다.** 로그로 사람을 되짚을 이유가 없고,
+    # 같은 브라우저인지 가리는 데는 8자면 충분하다.
+    print(f"[분류] 착수 세션={req.세션id[:8]} 글자수={len(desc)}", flush=True)
+
     오류 = None
     first = third = fourth = None
     hits, 순위, ranked = [], [], []
@@ -543,6 +565,9 @@ def _분류_흐름(req):
         저장실패 = type(e).__name__
         print(f"[저장] 실패 — {저장실패}", flush=True)
 
+    print(f"[분류] 완료 세션={req.세션id[:8]} {기록['elapsed']}초 "
+          f"→ {기록['최종10자리'] or '실패'} (run_id={run_id})", flush=True)
+
     yield ("결과", ClassifyOut(
         run_id=run_id,
         저장실패=저장실패,
@@ -628,6 +653,46 @@ def 분류_스트림(req: ClassifyIn):
         # 0단계 프로브에서 이 헤더로 버퍼링 없음을 확인했다.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+@app.post("/api/dropped")
+def 끊김(req: DroppedIn):
+    """화면이 결과를 못 받고 스트림이 끝났다. **기록만 한다.**
+
+    **왜 브라우저가 알려 줄 수 있는가** — "연결이 끊겼습니다" 를 띄운 화면은
+    살아 있다. 죽은 것은 그 한 요청이지 탭이 아니다. 그러니 그 사실을 다시
+    한 번 서버에 부탁할 수 있다.
+
+    **차감하지 않는다.** 분류를 시작할 때 이미 1 을 뺐다. 여기서 또 빼면
+    한 번 끊긴 사람이 두 번 손해를 본다.
+
+    이 행이 없으면 "가끔 끊긴다" 가 몇 %인지 영영 알 수 없고, 하트비트를
+    넣어도 나아졌는지 증명할 수 없다. 세는 것이 목적이다.
+    """
+    # 남용 방지. 분류 상한과 같은 수로 둔다 — 분류보다 더 자주 끊길 수는 없다.
+    if 끊김보고.get(req.세션id, 0) >= 세션_분류_상한:
+        raise HTTPException(status_code=429, detail="보고가 너무 많습니다.")
+    끊김보고[req.세션id] = 끊김보고.get(req.세션id, 0) + 1
+
+    기록 = {
+        "세션id": req.세션id,
+        "물품설명": req.desc,
+        "입력출처": "텍스트",
+        "elapsed": round(req.경과, 1),
+        # 오류 열에 남기므로 peek 의 오류 집계에 그대로 잡힌다.
+        "오류": f"연결 끊김 (마지막 완료 단계 {req.단계}) {req.사유}"[:200],
+    }
+    try:
+        run_id = storage.save_run(기록)
+    except Exception as e:
+        # 끊김을 기록하려다 또 실패했다. 화면에 알릴 것은 없다 —
+        # 사용자는 이미 오류 안내를 보고 있다.
+        print(f"[끊김] 저장 실패 — {type(e).__name__}", flush=True)
+        return {"ok": False}
+
+    print(f"[끊김] 세션={req.세션id[:8]} 단계={req.단계} "
+          f"{req.경과:.0f}초 (run_id={run_id})", flush=True)
+    return {"ok": True}
+
 
 @app.post("/api/feedback")
 def 피드백(req: FeedbackIn):
