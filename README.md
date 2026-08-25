@@ -1,6 +1,13 @@
 # HS코드 분류 검증 보조 시스템
 
-### → **https://hsk-code-checker.streamlit.app**
+### → **https://hskcodechecker-web.onrender.com**
+
+<sub>**첫 분류는 20초쯤 더 걸립니다.** 무료 호스팅이라 API 서버가 15분 무활동이면
+잠들고, 첫 요청이 그걸 깨웁니다. 화면 자체는 바로 뜹니다.</sub>
+
+<sub>2026-08-25 에 Streamlit → FastAPI + React 로 옮겼습니다. **이전 버전도 그대로
+살아 있습니다 → https://hsk-code-checker.streamlit.app** — 카탈로그 업로드와
+이전 결과 목록은 아직 그쪽에만 있습니다.</sub>
 
 수입 물품의 물품설명을 넣으면 **HS 10자리 세번 후보와 그 근거가 된 과거 결정례**를 함께 돌려주는 시스템입니다.
 
@@ -275,9 +282,11 @@ high로 올라왔습니다.** 최종 코드는 30건 전건 그대로였는데 *
   그래서 초안을 **사람이 고칠 수 있는 입력창에** 넣고, 카탈로그에 없어서 채우지
   못한 항목(재질·치수 등)을 화면에 띄웁니다 — 지어낸 재질 하나가 분류를 통째로
   바꾸는데 사용자는 어디서 틀어졌는지 알 수 없기 때문입니다.
-- **일일 호출 상한 50회는 완전한 방어가 아닙니다.** 카운터가 서버의 파일에 있어서
-  앱이 재시작되거나 다시 배포되면 0으로 돌아갑니다. 실행 기록은 외부 DB로 옮겼지만
-  이 카운터는 아직 옮기지 않았습니다.
+- **호출 상한은 완전한 방어가 아닙니다.** 일일 50회 카운터는 DB(`counters` 표)에
+  있어 재배포해도 유지되지만, **세션 5회는 브라우저 저장소에 둔 익명 id 로 세므로
+  저장소를 지우거나 다른 브라우저를 열면 초기화됩니다.** 진짜 방어선은 일일 상한
+  쪽이고, 세션 상한은 한 사람이 무심코 연달아 누르는 것을 막는 정도입니다.
+  게이트 상한(세션 15회)은 서버 메모리에 있어 무료 호스팅이 잠들면 함께 사라집니다.
 
 ---
 
@@ -290,7 +299,15 @@ echo GEMINI_API_KEY=your_key > .env
 ```
 
 ```bash
-streamlit run app.py       # 웹 UI ([0] 게이트 + [1]~[4] 분류과정)
+# 현재 구성 — 창 두 개에 나눠 띄웁니다
+pip install -r api/requirements.txt
+uvicorn api.main:app --reload           # API  → http://127.0.0.1:8000
+cd web && npm install && npm run dev    # 화면 → http://localhost:5173
+```
+
+```bash
+# 이전 구성 (동결. 버그 수정만 합니다)
+streamlit run app.py
 ```
 
 ```bash
@@ -327,15 +344,22 @@ src/
 ├── evaluate.py    채점·배치 실행·일관성 측정
 └── storage.py     앱 실행 기록 (로컬 SQLite / 배포 Supabase)
 
-app.py             Streamlit UI. 분류과정은 부르기만 하고 측정 코드와 섞지 않는다
+api/main.py        FastAPI. src/ 를 부르는 얇은 껍데기 (게이트 · 분류 SSE · 피드백)
+web/src/           React + TypeScript 화면 (App.tsx · api.ts · types.ts)
+
+app.py             Streamlit UI — **동결.** 새 화면으로 옮긴 뒤 버그 수정만 한다
 
 EXPERIMENTS.md     모든 실험의 날짜별 기록 (틀렸던 판단과 정정 포함)
 CLAUDE.md          설계 원칙과 스코프 통제 규칙
 ```
 
-의존성은 8개입니다. LangChain·벡터DB·웹 프레임워크를 쓰지 않았습니다 —
-결정례 수천 건 규모에서는 numpy 배열 하나로 충분하고, 추상화가 두꺼우면
-어디서 틀렸는지 알 수 없기 때문입니다.
+**LangChain·벡터DB를 쓰지 않았습니다** — 결정례 수천 건 규모에서는 numpy 배열
+하나로 충분하고, 추상화가 두꺼우면 어디서 틀렸는지 알 수 없기 때문입니다.
+검색은 `search.py` 안에서 코사인 유사도 한 줄로 끝납니다.
+
+화면은 2026-08-25 에 Streamlit 에서 FastAPI + React 로 옮겼지만,
+**분류과정(`src/`)은 한 줄도 바뀌지 않았습니다.** 갈아치운 것은 `app.py` 823줄
+하나입니다 — 애초에 `src/` 어디에도 `import streamlit` 이 없었기 때문입니다.
 
 ### 용어 대응
 
