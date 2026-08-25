@@ -179,7 +179,13 @@ summary { cursor: pointer; font-size: 0.9rem; color: var(--주색);
 .피드백 .줄 button.고름 { border-color: var(--주색);
   background: var(--주색연); }
 .피드백 input { margin: 10px 0; }
-.보냄 { color: var(--초록); font-size: 0.85rem; }
+/* 버튼 옆 작은 글씨였을 때 "저장됐는지 모르겠다"는 지적을 받았다.
+   줄 아래로 빼고 상자를 씌워 눈에 걸리게 한다. */
+.보냄 {
+  color: var(--초록); font-size: 0.88rem; font-weight: 500;
+  background: var(--초록연); border-radius: var(--R);
+  padding: 12px 16px; margin: 4px 0 0;
+}
 
 /* ── 좁은 화면 ───────────────────────────────────────────
    @media 는 "화면 폭이 이 조건일 때만 아래 규칙을 쓴다"는 뜻이다.

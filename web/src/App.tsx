@@ -16,6 +16,20 @@ import * as api from "./api";
 import type { ClassifyOut, GateOut, 단계이벤트 } from "./types";
 import "./App.css";
 
+/** 8517130000 → 8517.13-0000. 신고서에서 쓰는 모양이다.
+ *
+ *  **app.py 의 세번_표기() 와 같은 규칙을 쓴다** — 두 화면이 같은 코드를
+ *  다른 모양으로 보여주면 사용자가 다른 값인 줄 안다.
+ *
+ *  `\D` 는 "숫자가 아닌 글자" 다. /.../g 의 g 는 "처음 하나만 말고 전부".
+ *  결정례 데이터에 점·하이픈이 섞여 들어와도 일단 다 걷어내고 다시 붙인다.
+ */
+function 세번표기(코드: string | null | undefined): string {
+  const 숫자 = (코드 ?? "").replace(/\D/g, "");
+  if (숫자.length !== 10) return 코드 || "—";   // 10자리가 아니면 손대지 않는다
+  return `${숫자.slice(0, 4)}.${숫자.slice(4, 6)}-${숫자.slice(6)}`;
+}
+
 const 단계이름 = [
   "6자리 후보 뽑기",
   "비슷한 결정례 찾기",
@@ -37,6 +51,14 @@ export default function App() {
   const [평가, set평가] = useState<"up" | "down" | null>(null);
   const [메모, set메모] = useState("");
   const [보냈다, set보냈다] = useState(false);
+  const [저장중, set저장중] = useState(false);
+
+  /** 메모를 고치는 순간 "저장했습니다"는 더 이상 사실이 아니다.
+   *  초록 문구를 그대로 두면 고친 내용까지 저장된 줄 안다. */
+  function 메모바꾸기(v: string) {
+    set메모(v);
+    set보냈다(false);
+  }
 
   // **처리 중에 창을 닫거나 새로고침하려 하면 경고한다.**
   // 오버레이는 클릭만 막지 F5 는 못 막는다. 멈춘 줄 알고 F5 를 누르는 게
@@ -112,12 +134,19 @@ export default function App() {
   }
 
   async function 의견보내기(새평가: "up" | "down" | null, 새메모: string) {
-    if (!결과?.run_id) return;
+    if (!결과?.run_id || 저장중) return;
+    set저장중(true);
+    set보냈다(false);
+    set오류(null);
     try {
       await api.피드백(결과.run_id, 새평가, 새메모.trim() || null);
       set보냈다(true);
     } catch (e) {
       set오류(e instanceof Error ? e.message : "저장하지 못했습니다.");
+    } finally {
+      // finally 는 성공하든 실패하든 반드시 돈다. 자바의 try/finally 와 같다.
+      // 여기서 안 풀면 한 번 실패한 뒤로 버튼이 영영 잠긴다.
+      set저장중(false);
     }
   }
 
@@ -215,8 +244,8 @@ export default function App() {
       {결과 && <결과화면
         결과={결과}
         평가={평가} set평가={set평가}
-        메모={메모} set메모={set메모}
-        보냈다={보냈다} 보내기={의견보내기} />}
+        메모={메모} set메모={메모바꾸기}
+        보냈다={보냈다} 저장중={저장중} 보내기={의견보내기} />}
       </main>
     </>
   );
@@ -225,13 +254,14 @@ export default function App() {
 // 결과가 길어서 따로 뺐다. props 는 부모가 내려주는 값이다 —
 // 자바로 치면 생성자 인자에 가깝고, **자식이 마음대로 못 바꾼다.**
 // 바꿔야 하면 부모가 준 set... 함수를 부른다.
-function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다, 보내기 }: {
+function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다, 저장중, 보내기 }: {
   결과: ClassifyOut;
   평가: "up" | "down" | null;
   set평가: (v: "up" | "down") => void;
   메모: string;
   set메모: (v: string) => void;
   보냈다: boolean;
+  저장중: boolean;
   보내기: (평가: "up" | "down" | null, 메모: string) => void;
 }) {
   if (결과.오류) return <div className="경고">{결과.오류}</div>;
@@ -243,7 +273,7 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
 
   return (
     <div className="결과">
-      <div className="코드">{결과.코드}</div>
+      <div className="코드">{세번표기(결과.코드)}</div>
       <div className="확신도">
         확신도 {결과.확신도 ?? "—"}
         {결과.확정확신도 && ` / 세번 확정 ${결과.확정확신도}`}
@@ -260,7 +290,7 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
       {결과.확신도 === "high" ? (
         <p className="경고 높음">
           모델이 <b>확신도 high</b> 로 답했습니다.<br />
-          다만 시험 30건에서 high 인 답도 <b>3건 중 1건은 오답</b>이었습니다.
+          다만 시험 30건에서 high 인 답도 <b>3건 중 1건은 오답</b>이었습니다.<br />
           아래 확인 사항과 근거 결정례를 보세요.
         </p>
       ) : (
@@ -285,7 +315,7 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
         <summary>근거 결정례 {결과.결정례.length}건</summary>
         {결과.결정례.map((h) => (
           <div key={h.참조번호} className="사례">
-            <b>{h.결정세번}</b> · {h.참조번호} · 유사도 {h.score.toFixed(3)}
+            <b>{세번표기(h.결정세번)}</b> · {h.참조번호} · 유사도 {h.score.toFixed(3)}
             <div className="사례품명">{h.품명}</div>
           </div>
         ))}
@@ -294,22 +324,34 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
       <div className="피드백">
         <b>이 결과가 맞았나요?</b>
         <div className="줄">
-          <button className={평가 === "up" ? "고름" : ""}
+          <button className={평가 === "up" ? "고름" : ""} disabled={저장중}
                   onClick={() => 엄지("up")}>👍</button>
-          <button className={평가 === "down" ? "고름" : ""}
+          <button className={평가 === "down" ? "고름" : ""} disabled={저장중}
                   onClick={() => 엄지("down")}>👎</button>
         </div>
         <input
           value={메모}
           onChange={(e) => set메모(e.target.value)}
+          disabled={저장중}
           placeholder="틀렸다면 정답이나 이유를 적어주세요 (선택)"
         />
         <div className="줄">
-          {보냈다 && <span className="보냄">저장했습니다. 감사합니다.</span>}
-          <button onClick={() => 보내기(평가, 메모)} disabled={!메모.trim()}>
-            의견 보내기
+          <button onClick={() => 보내기(평가, 메모)}
+                  disabled={저장중 || (!평가 && !메모.trim())}>
+            {저장중 ? "보내는 중…" : "의견 보내기"}
           </button>
         </div>
+
+        {/* **저장됐는지 확실히 보이게 한다.** 버튼 옆 작은 글씨로는
+            눌렀는지 안 눌렀는지 알 수 없다는 지적을 받았다.
+            줄 아래 초록 상자로 빼고, 메모를 고치면 다시 사라진다. */}
+        {보냈다 && (
+          <p className="보냄">
+            ✓ 저장했습니다. 감사합니다.
+            {평가 && <> — {평가 === "up" ? "맞음" : "틀림"}
+              {메모.trim() && " · 메모 함께 저장"}</>}
+          </p>
+        )}
       </div>
     </div>
   );
