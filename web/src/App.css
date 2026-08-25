@@ -29,8 +29,8 @@
 .띠 { padding: 18px 20px 0; }
 .띠속 {
   max-width: 760px; margin: 0 auto;
-  display: flex; align-items: center; justify-content: space-between;
-  background: #fff; border-radius: 999px; padding: 12px 14px 12px 22px;
+  display: flex; align-items: center;
+  background: #fff; border-radius: 999px; padding: 14px 22px;
   box-shadow: 0 6px 20px rgba(10, 20, 60, .12);
   /* **글자색을 되돌린다.** 이 알약은 .히어로 안에 있어서 color: #fff 를
      물려받는다. 흰 배경에 흰 글자가 되어 로고가 안 보였다. */
@@ -40,32 +40,27 @@
   align-items: center; gap: 9px; }
 .점 { width: 9px; height: 9px; border-radius: 50%;
   background: var(--주색); display: inline-block; }
-.띠링크 { color: #fff; background: var(--주색); text-decoration: none;
-  font-size: 0.85rem; font-weight: 500; padding: 8px 16px;
-  border-radius: 999px; }
-.띠링크:hover { background: var(--주색진); }
-
 /* ── 히어로 ──────────────────────────────────────────────
    아래쪽 두 모서리만 둥글려 흰 본문 위에 얹힌 판처럼 보이게 한다. */
 .히어로 {
   background: var(--주색); color: #fff;
   border-radius: 0 0 var(--R크) var(--R크);
-  padding-bottom: 56px;
+  padding-bottom: 36px;
   /* 점 격자. radial-gradient 로 점 하나를 그리고 background-size 로 타일처럼
      반복시킨다. 이미지 파일 없이 무늬를 만드는 흔한 방법이다. */
   background-image: radial-gradient(rgba(255, 255, 255, .16) 1px, transparent 1px);
   background-size: 22px 22px;
 }
-.히어로속 { padding-top: 56px; }
+.히어로속 { padding-top: 40px; }
 .히어로 h1 {
-  font-size: clamp(2rem, 5.5vw, 3rem);   /* 화면 폭에 따라 최소~최대 사이에서 변한다 */
+  font-size: clamp(1.9rem, 5vw, 2.6rem);   /* 화면 폭에 따라 최소~최대 사이에서 변한다 */
   line-height: 1.2; font-weight: 700; letter-spacing: -0.02em;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
 }
 .히어로 .설명 { font-size: 1.05rem; color: rgba(255, 255, 255, .88);
-  max-width: 40em; margin: 0 0 28px; }
+  max-width: 40em; margin: 0 0 20px; }
 
-.숫자들 { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.숫자들 { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
 .숫자 {
   background: rgba(255, 255, 255, .13); border: 1px solid rgba(255, 255, 255, .22);
   border-radius: var(--R); padding: 12px 18px; min-width: 132px;
@@ -75,20 +70,18 @@
 
 /* **이 단서를 빼지 않는다.** 56.7% 는 협의회 사례 30건에서 잰 값이라
    실무 평균이 아니다. 숫자만 크게 걸고 조건을 감추면 README 가 그렇게
-   조심해서 쓴 이유가 없어진다. */
-.단서 { font-size: 0.8rem; color: rgba(255, 255, 255, .7);
-  max-width: 44em; margin: 0 0 28px; }
+   조심해서 쓴 이유가 없어진다.
 
-.큰버튼 {
-  display: inline-block; background: #0f1116; color: #fff;
-  text-decoration: none; font-weight: 600; font-size: 0.95rem;
-  padding: 14px 30px; border-radius: 999px;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, .22);
-}
-.큰버튼:hover { background: #000; }
+   투명도를 .7 로 뒀더니 폰에서 읽기 힘들었다 — 화면이 작을수록 대비가
+   더 필요하다. .88 로 올리고 문장도 줄였다. */
+.단서 { font-size: 0.82rem; line-height: 1.6; color: rgba(255, 255, 255, .88);
+  max-width: 44em; margin: 0; }
 
-/* ── 도구 ────────────────────────────────────────────── */
-.도구 { padding: 44px 0 100px; }
+/* ── 도구 ──────────────────────────────────────────────
+   **히어로에 CTA 버튼을 두지 않는다.** 스크롤 한 번이면 닿는 거리에
+   입력창이 있는데 버튼을 하나 더 두면 세로만 길어진다. 도구는 빨리
+   보일수록 좋다 — 이건 랜딩 페이지가 아니라 쓰는 물건이다. */
+.도구 { padding: 32px 0 100px; }
 .도구제목 { font-size: 1.15rem; font-weight: 600; margin: 0 0 14px; }
 
 textarea, input {
@@ -104,7 +97,10 @@ textarea:focus, input:focus {
 }
 textarea:disabled, input:disabled, button:disabled { opacity: 0.55; }
 
-.줄 { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
+/* 버튼이 들어가는 가로 줄. **오른쪽 정렬이 기본이다.** 곁들이 글자
+   (남은 횟수, 저장했습니다)는 JSX 에서 버튼보다 먼저 두면 왼쪽에 붙는다. */
+.줄 { display: flex; gap: 12px; align-items: center; margin: 14px 0;
+  justify-content: flex-end; }
 button {
   font: inherit; font-weight: 600; cursor: pointer;
   padding: 12px 26px; border: 0; border-radius: 999px;
@@ -130,7 +126,8 @@ button:disabled { cursor: not-allowed; }
 .경고.높음 { border-left-color: var(--초록); background: var(--초록연); }
 .되물음 { border-left-color: var(--노랑); background: var(--노랑연); }
 .되물음 ul { margin: 10px 0; padding-left: 20px; }
-.되물음 button { margin-top: 6px; background: var(--노랑); }
+.되물음 button { margin-top: 6px; background: var(--노랑);
+  display: block; margin-left: auto; }
 .되물음 button:hover:not(:disabled) { background: #965e08; }
 
 /* ── 진행 ────────────────────────────────────────────── */
@@ -189,16 +186,29 @@ summary { cursor: pointer; font-size: 0.9rem; color: var(--주색);
    기본 규칙을 좁은 쪽에 맞추고 넓을 때 늘리는 방식(mobile first)도 있지만,
    여기서는 이미 넓은 화면 기준으로 다 짜 놨으므로 예외만 덧붙인다.
 
-   숫자 카드 세 개는 min-width 132px + gap 12px 라 폭이 좁아지면
-   flex-wrap 이 알아서 줄을 바꾼다 — 따로 손대지 않는다. */
+   2026-08-25 폰 확인에서 나온 것들을 고쳤다 — 깨지지는 않았지만 읽기 힘들었다. */
 @media (max-width: 520px) {
   .띠 { padding: 12px 14px 0; }
-  .띠속 { padding: 10px 10px 10px 16px; }
-  .로고 { font-size: 0.82rem; }
-  .히어로속 { padding-top: 40px; }
-  .히어로 { padding-bottom: 40px; }
+  .띠속 { padding: 12px 18px; }
+  .로고 { font-size: 0.85rem; }
+  .히어로속 { padding-top: 28px; }
+  .히어로 { padding-bottom: 26px; }
   .쪽 { padding: 0 16px; }
+
+  /* 1.05rem 이 폰에서는 과했다. 문단이 벽처럼 보였다. */
+  .히어로 .설명 { font-size: 0.95rem; margin-bottom: 16px; }
+
+  /* min-width 132px 때문에 세 칸이 2+1 로 갈라졌다. min-width 를 풀고
+     flex: 1 1 0 으로 남은 폭을 셋이 똑같이 나눠 갖게 한다.
+     `flex: 1 1 0` = 늘어나도 되고(1), 줄어도 되고(1), 기준 폭은 0.
+     기준이 0 이라 내용 길이와 무관하게 정확히 3등분된다. */
+  .숫자들 { gap: 8px; }
+  .숫자 { flex: 1 1 0; min-width: 0; padding: 10px 12px; }
+  .숫자 b { font-size: 1.2rem; }
+  .숫자 span { font-size: 0.68rem; }
+
+  .단서 { font-size: 0.78rem; }
   .결과 { padding: 22px 18px; }
   .코드 { font-size: 1.9rem; }
-  .도구 { padding: 32px 0 72px; }
+  .도구 { padding: 24px 0 72px; }
 }

@@ -136,8 +136,6 @@ export default function App() {
         <header className="띠">
           <div className="띠속">
             <span className="로고"><span className="점" />HS코드 분류 검증 보조</span>
-            <a className="띠링크" target="_blank" rel="noreferrer"
-               href="https://github.com/arang0105/HskCodeChecker">GitHub</a>
           </div>
         </header>
 
@@ -158,12 +156,9 @@ export default function App() {
               값이지 실무 평균이 아니다. 조건을 감추면 README 가 그렇게
               조심해서 쓴 이유가 없어진다. */}
           <p className="단서">
-            정답률은 전문가끼리도 판단이 갈려 협의회에 올라간 사례 30건에서 잰
-            값입니다. 만드는 동안 한 번도 열어보지 않은 시험 문제이고,
-            쉬운 건에서는 6자리 85.0% / 10자리 80.0% 였습니다.
+            전문가끼리도 판단이 갈려 협의회에 올라간 사례 30건 — 만드는 동안
+            한 번도 열지 않은 봉인 시험입니다. 쉬운 건에서는 85.0% / 80.0% 였습니다.
           </p>
-
-          <a className="큰버튼" href="#도구">바로 써보기</a>
         </div>
       </section>
 
@@ -178,11 +173,14 @@ export default function App() {
         placeholder="예: 폴리에스터 100% 직물로 만든 성인용 반팔 티셔츠. 무게 180g/m2, 편물이 아닌 직물."
       />
 
+      {/* .줄 은 오른쪽 정렬이다. 그래서 **남은 횟수를 버튼보다 먼저** 둔다 —
+          CSS 로 순서를 뒤집을 수도 있지만, 그러면 눈에 보이는 순서와
+          Tab 키가 도는 순서가 어긋난다. */}
       <div className="줄">
+        {결과 && <span className="남은">남은 횟수 {결과.남은횟수}회</span>}
         <button onClick={눌림} disabled={처리중 || 잠김 || !desc.trim()}>
           {처리중 ? "분류하는 중…" : "분류하기"}
         </button>
-        {결과 && <span className="남은">남은 횟수 {결과.남은횟수}회</span>}
       </div>
 
       {오류 && <div className="경고">{오류}</div>}
@@ -306,10 +304,12 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
           onChange={(e) => set메모(e.target.value)}
           placeholder="틀렸다면 정답이나 이유를 적어주세요 (선택)"
         />
-        <button onClick={() => 보내기(평가, 메모)} disabled={!메모.trim()}>
-          의견 보내기
-        </button>
-        {보냈다 && <span className="보냄">저장했습니다. 감사합니다.</span>}
+        <div className="줄">
+          {보냈다 && <span className="보냄">저장했습니다. 감사합니다.</span>}
+          <button onClick={() => 보내기(평가, 메모)} disabled={!메모.trim()}>
+            의견 보내기
+          </button>
+        </div>
       </div>
     </div>
   );
