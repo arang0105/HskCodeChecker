@@ -6,6 +6,12 @@
 fastapi==0.141.1
 uvicorn==0.52.3
 
+# 카탈로그 업로드(multipart/form-data)를 받는 데 필요하다. FastAPI 가
+# UploadFile 을 쓸 때만 부르므로 자기 의존성으로 들고 있지 않다.
+# **로컬에서는 streamlit 이 끌고 와서 이미 깔려 있다** — 여기 안 적으면
+# 로컬에서만 되고 배포에서 500 이 난다.
+python-multipart==0.0.32
+
 # 아래 넷은 루트와 **같은 버전이어야 한다.** 두 앱이 같은 Supabase 표에
 # 기록하므로, 여기서 버전이 갈리면 같은 입력에 다른 결과가 나올 수 있다.
 google-generativeai==0.8.6

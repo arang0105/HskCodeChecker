@@ -16,7 +16,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -47,6 +47,12 @@ for 스트림 in (sys.stdout, sys.stderr):
 세션_분류_상한 = 5
 일일_분류_상한 = 50
 세션_게이트_상한 = 15      # 되묻기만 반복하는 것도 막는다
+
+# [0-a] 카탈로그 추출은 분류 상한과 **별개로** 센다.
+# 추출은 flash 1콜이라 싸고, 초안을 다시 뽑는 게 벌칙이 되면 사용자가
+# 마음에 안 드는 초안을 그냥 쓰게 된다. 게이트를 따로 세는 것과 같은 이유다.
+세션_추출_상한 = 10
+카탈로그_최대_파일수 = 3
 
 
 # ------------------------------------------------------------------ 기동
@@ -154,6 +160,24 @@ def 세션_분류횟수(세션id):
 # 도 서버 메모리라 재시작하면 같이 날아갔다 — 방어 수준은 동등하다.
 # 게이트는 flash 1콜이라 싸고, 비싼 쪽(분류)은 DB 로 센다.
 게이트횟수 = {}
+추출횟수 = {}
+
+
+def 파일_형식(f: UploadFile):
+    """업로드 파일의 MIME 형식을 정한다. 모르면 None.
+
+    **app.py:205 의 같은 이름 함수를 그대로 옮겼다.** 브라우저가 알려주는
+    content_type 을 먼저 믿고, 비었거나 우리가 안 받는 형식이면 파일 이름의
+    확장자로 판정한다. 브라우저·OS 에 따라 형식이 빈 문자열로 오기 때문이다.
+    """
+    if f.content_type in pipeline.CATALOG_MIME:
+        return f.content_type
+    이름 = f.filename or ""
+    확장자 = 이름.rsplit(".", 1)[-1].lower() if "." in 이름 else ""
+    for mime, 별칭 in pipeline.CATALOG_MIME.items():
+        if 확장자 == 별칭 or (확장자 == "jpeg" and 별칭 == "jpg"):
+            return mime
+    return None
 
 
 def 상한_검사(세션id):
@@ -209,6 +233,22 @@ class ClassifyIn(BaseModel):
     게이트_충분: bool = True
     게이트_부족항목: list[str] = []
     게이트_질문: list[str] = []
+    # [0-a] 카탈로그에서 온 입력인가. 게이트 값들과 **같은 성격의 기록이다** —
+    # 프론트가 판정해서 보내고 서버는 믿는다. 막는 데 쓰지 않으므로
+    # 틀린 값이 와도 집계가 조금 흐려질 뿐이다. 아는 값이 아니면 '텍스트'로 친다.
+    입력출처: str = Field(default="텍스트", max_length=20)
+    카탈로그_빠진정보: list[str] = []
+
+
+class 제품Out(BaseModel):
+    이름: str = ""
+    물품설명: str = ""
+    빠진정보: list[str] = []
+
+
+class CatalogOut(BaseModel):
+    제품들: list[제품Out] = []
+    남은추출: int = 0
 
 
 class FeedbackIn(BaseModel):
@@ -292,7 +332,79 @@ def 잔여(세션id: str = Query("", max_length=64)):
         "세션상한": 세션_분류_상한,
         "일일남은": max(0, 일일_분류_상한 - 오늘쓴),
         "일일상한": 일일_분류_상한,
+        # 카탈로그 추출은 분류와 별개로 센다. 이쪽은 서버 메모리라
+        # **콜드스타트마다 리셋된다** — 게이트 횟수와 같은 수준의 방어다.
+        "추출남은": max(0, 세션_추출_상한 - 추출횟수.get(세션id, 0)),
+        "추출상한": 세션_추출_상한,
     }
+
+
+@app.post("/api/catalog", response_model=CatalogOut)
+def 카탈로그(세션id: str = Form("", max_length=64),
+           files: list[UploadFile] = File(default=[])):
+    """[0-a] 카탈로그(PDF·사진)에서 물품설명 초안을 뽑는다.
+
+    **이 단계는 파이프라인 앞에 붙는다.** 여기서 나온 초안을 사람이 고친
+    텍스트가 [0]~[4] 로 간다. 그래야 봉인을 열어 얻은 숫자가 그대로 유효하다
+    (pipeline.py:33 의 같은 주석 참조).
+
+    **async def 가 아닌 이유** — catalog_extract 는 LLM 응답을 기다리는
+    동안 스레드를 붙잡는다. async 함수 안에서 그러면 이벤트 루프가 통째로
+    멈춰 다른 요청까지 선다. sync 로 두면 FastAPI 가 스레드풀에서 돌린다.
+    파일도 f.file.read() 로 동기로 읽는다.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="파일을 올려 주세요.")
+    # **버튼의 disabled 를 믿지 않는다.** 화면이 그려질 때의 상태라 한 박자
+    # 늦다. 분류 버튼에서 실제로 6번째가 통과한 적이 있다(app.py:604).
+    if 추출횟수.get(세션id, 0) >= 세션_추출_상한:
+        raise HTTPException(
+            status_code=429,
+            detail="이 브라우저에서 카탈로그를 읽을 수 있는 횟수를 다 썼습니다.")
+    if len(files) > 카탈로그_최대_파일수:
+        raise HTTPException(
+            status_code=400,
+            detail=f"파일은 {카탈로그_최대_파일수}개까지 올릴 수 있습니다.")
+
+    파일들, 합계 = [], 0
+    for f in files:
+        mime = 파일_형식(f)
+        if mime is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{f.filename}' 은 읽을 수 없는 형식입니다. PDF·PNG·JPG 만 됩니다.")
+        내용 = f.file.read()
+        합계 += len(내용)
+        if 합계 > pipeline.CATALOG_MAX_MB * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"파일이 너무 큽니다. 합계 {pipeline.CATALOG_MAX_MB}MB 까지 "
+                       f"올릴 수 있습니다 (지금 {합계 / 1048576:.1f}MB).")
+        파일들.append((내용, mime))
+
+    # 차감을 먼저 한다. 실패하면 아래에서 되돌린다.
+    추출횟수[세션id] = 추출횟수.get(세션id, 0) + 1
+    try:
+        r = pipeline.catalog_extract(파일들, model=config.MODEL_DEV)
+    except Exception as e:
+        추출횟수[세션id] -= 1
+        print(f"[카탈로그] 실패 — {type(e).__name__}: {e}", flush=True)
+        raise HTTPException(status_code=502,
+                            detail="카탈로그를 읽는 중 문제가 생겼습니다. "
+                                   "잠시 후 다시 시도해 주세요.")
+
+    if r["읽기실패"]:
+        # 읽지 못한 것은 사용자 잘못이 아니다. 되돌려 준다.
+        추출횟수[세션id] -= 1
+        raise HTTPException(status_code=422,
+                            detail="카탈로그에서 제품을 찾지 못했습니다. "
+                                   "제품 사양이 보이는 페이지로 다시 올리거나, "
+                                   "아래에 직접 입력해 주세요.")
+
+    return CatalogOut(
+        제품들=[제품Out(**p) for p in r["제품들"]],
+        남은추출=max(0, 세션_추출_상한 - 추출횟수.get(세션id, 0)),
+    )
 
 
 @app.post("/api/gate", response_model=GateOut)
@@ -396,7 +508,10 @@ def _분류_흐름(req):
         "세션id": req.세션id,
         "유입": req.유입,
         "물품설명": desc,
-        "입력출처": "텍스트",      # 카탈로그 경로는 1차 범위가 아니다
+        "입력출처": (req.입력출처
+                  if req.입력출처 in ("텍스트", "카탈로그", "카탈로그(수정)")
+                  else "텍스트"),
+        "카탈로그_빠진정보": req.카탈로그_빠진정보[:20],
         "게이트_충분": req.게이트_충분,
         "게이트_부족항목": req.게이트_부족항목,
         "게이트_질문": req.게이트_질문,
