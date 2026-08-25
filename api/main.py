@@ -16,7 +16,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -271,6 +271,27 @@ def 상태():
         "ok": True,
         "결정례": 0 if 벡터 is None else len(벡터),
         "세번표": len(자원["세번표"]) if "세번표" in 자원 else 0,
+    }
+
+
+@app.get("/api/quota")
+def 잔여(세션id: str = Query("", max_length=64)):
+    """이 브라우저와 오늘 전체가 몇 번 더 쓸 수 있는지.
+
+    **막는 데는 쓰지 않는다.** 막는 것은 처리 시점에 상한_검사() 가 다시
+    한다(main.py:159). 여기는 화면에 미리 띄워 주기만 하는 자리다 —
+    다섯 번째를 누르고 나서야 다 썼다는 걸 아는 것보다는 낫다.
+
+    세션id 가 비면 세션 몫은 상한 그대로 돌려준다. 화면이 처음 뜰 때
+    localStorage 가 아직 비어 있는 경우다.
+    """
+    세션쓴 = 세션_분류횟수(세션id) if 세션id else 0
+    오늘쓴 = 일일_사용량()
+    return {
+        "세션남은": max(0, 세션_분류_상한 - 세션쓴),
+        "세션상한": 세션_분류_상한,
+        "일일남은": max(0, 일일_분류_상한 - 오늘쓴),
+        "일일상한": 일일_분류_상한,
     }
 
 
