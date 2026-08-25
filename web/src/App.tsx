@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from "react";
 import * as api from "./api";
-import type { ClassifyOut, GateOut, QuotaOut, 단계이벤트 } from "./types";
+import type { ClassifyOut, GateOut, QuotaOut, 제품, 단계이벤트 } from "./types";
 import { 이력읽기, 이력쓰기, 이력비우기, 때표기, type 이력항목 } from "./history";
 import "./App.css";
 
@@ -71,6 +71,17 @@ export default function App() {
   // 함수를 넘기면 React 가 **맨 처음 한 번만** 부른다.
   const [이력, set이력] = useState<이력항목[]>(이력읽기);
 
+  // --- [0-a] 카탈로그 ---
+  const [파일들, set파일들] = useState<File[]>([]);
+  const [제품들, set제품들] = useState<제품[]>([]);
+  const [고른번호, set고른번호] = useState(0);
+  const [읽는중, set읽는중] = useState(false);
+  const [카탈로그오류, set카탈로그오류] = useState<string | null>(null);
+
+  // 입력창에 넣은 초안. **원문을 함께 들고 있어야** 사용자가 손봤는지
+  // 알 수 있다. 그게 입력출처를 '카탈로그' 와 '카탈로그(수정)' 로 가른다.
+  const [초안, set초안] = useState<{ 텍스트: string; 빠진정보: string[] } | null>(null);
+
   /** 메모를 고치는 순간 "저장했습니다"는 더 이상 사실이 아니다.
    *  초록 문구를 그대로 두면 고친 내용까지 저장된 줄 안다. */
   function 메모바꾸기(v: string) {
@@ -119,10 +130,18 @@ export default function App() {
     set메모("");
     set보냈다(false);
     try {
+      // **초안을 그대로 썼는지 손봤는지 가른다.** 카탈로그 경로는 봉인을
+      // 다 써서 정확도를 잴 수 없으므로, 이게 추출 품질을 짐작할 유일한
+      // 단서다(app.py:703-712 와 같은 판정).
+      const 출처 = !초안 ? "텍스트"
+        : desc.trim() === 초안.텍스트.trim() ? "카탈로그" : "카탈로그(수정)";
+
       const r = await api.분류(
         {
           desc: desc.trim(),
           강행,
+          입력출처: 출처,
+          카탈로그_빠진정보: 초안?.빠진정보 ?? [],
           게이트_충분: 게이트값?.충분 ?? true,
           게이트_부족항목: 게이트값?.부족항목 ?? [],
           게이트_질문: 게이트값?.질문 ?? [],
@@ -151,11 +170,41 @@ export default function App() {
     }
   }
 
+  async function 카탈로그읽기() {
+    if (파일들.length === 0 || 읽는중) return;
+    set읽는중(true);
+    set카탈로그오류(null);
+    set제품들([]);
+    try {
+      const r = await api.카탈로그(파일들);
+      set제품들(r.제품들);
+      set고른번호(0);
+      // 잔여 전체를 다시 읽지 않고 추출 몫만 갈아 끼운다.
+      // 이전 => ... 로 넘기는 이유는 단계 이벤트 때와 같다 — 바깥의 잔여는
+      // 이 함수가 만들어질 때의 옛 값이다.
+      set잔여((이전) => (이전 ? { ...이전, 추출남은: r.남은추출 } : 이전));
+    } catch (e) {
+      set카탈로그오류(e instanceof api.ApiError ? e.message
+                                              : "카탈로그를 읽지 못했습니다.");
+    } finally {
+      // finally 는 성공이든 실패든 지나간다. 여기서 안 풀면 버튼이 영영 잠긴다.
+      set읽는중(false);
+    }
+  }
+
+  function 초안넣기(p: 제품) {
+    setDesc(p.물품설명);
+    set초안({ 텍스트: p.물품설명, 빠진정보: p.빠진정보 });
+    set게이트(null);
+    set오류(null);
+  }
+
   // 예시를 넣으면 **앞 입력에 대한 되물음과 오류는 지운다.** 남겨 두면
   // 방금 바꾼 글에 대한 안내인 줄 읽힌다. 직전 결과는 그대로 둔다 —
   // 아직 새로 분류한 게 아니므로 지울 이유가 없다.
   function 예시넣기(글: string) {
     setDesc(글);
+    set초안(null);          // 이제 카탈로그에서 온 글이 아니다
     set게이트(null);
     set오류(null);
   }
@@ -212,6 +261,9 @@ export default function App() {
   // app.py:531 이 이력[1:] 을 쓴 것과 같은 이유다.
   const 지난것 = 결과 && !결과.오류 ? 이력.slice(1) : 이력;
 
+  // 고른 제품. 목록이 새로 오면 고른번호가 범위를 넘을 수 있어 첫 것으로 눕힌다.
+  const 고른것: 제품 | undefined = 제품들[고른번호] ?? 제품들[0];
+
   return (
     // <> </> 는 Fragment 다. JSX 는 최상위 요소가 하나여야 하는데, 그것 때문에
     // 의미 없는 <div> 를 하나 더 두고 싶지 않을 때 쓴다. 화면에는 안 남는다.
@@ -252,6 +304,75 @@ export default function App() {
       <main className="쪽 도구" id="도구">
       <p className="도구제목">물품설명 넣기</p>
 
+      {/* **기본은 접힘.** 첫 화면을 깔끔하게 두려는 것이고, 측정된 경로는
+          여전히 글로 넣는 쪽이다. 카탈로그가 있는 사람만 펼쳐서 쓴다. */}
+      <details className="카탈로그">
+        <summary>📄 카탈로그(PDF·사진)에서 물품설명 뽑기</summary>
+
+        <p className="캡션">
+          제품 안내서·사양표·제품 사진을 올리면 물품설명 초안을 만들어 드립니다.<br />
+          <b>카탈로그에 없는 정보는 채우지 않습니다.</b> 비어 있는 항목은 따로 알려드립니다.
+        </p>
+
+        {/* e.target.files 는 배열이 아니라 FileList 다. map 이 없으므로
+            Array.from 으로 진짜 배열을 만든다. 취소하면 null 이 온다. */}
+        <input
+          type="file"
+          multiple
+          accept=".pdf,.png,.jpg,.jpeg,.webp"
+          disabled={읽는중}
+          onChange={(e) => {
+            set파일들(Array.from(e.target.files ?? []));
+            set카탈로그오류(null);
+          }}
+        />
+
+        <div className="줄">
+          <span className="남은">
+            파일 3개 · 합계 10MB 까지
+            {잔여 && ` · 남은 횟수 ${잔여.추출남은}/${잔여.추출상한}`}
+          </span>
+          <button onClick={카탈로그읽기}
+                  disabled={읽는중 || 파일들.length === 0 || 잔여?.추출남은 === 0}>
+            {읽는중 ? "읽는 중…" : "카탈로그 읽기"}
+          </button>
+        </div>
+
+        {카탈로그오류 && <div className="경고">{카탈로그오류}</div>}
+
+        {고른것 && (
+          <>
+            {제품들.length > 1 ? (
+              <label className="고르기">
+                분류할 제품을 고르세요
+                <select value={고른번호}
+                        onChange={(e) => set고른번호(Number(e.target.value))}>
+                  {제품들.map((p, i) => (
+                    <option key={i} value={i}>{p.이름}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <p className="제품이름"><b>{고른것.이름}</b></p>
+            )}
+
+            <div className="초안상자">{고른것.물품설명}</div>
+
+            {고른것.빠진정보.length > 0 && (
+              <p className="빠진">
+                카탈로그에 없어서 비워 둔 항목: <b>{고른것.빠진정보.join(", ")}</b>
+              </p>
+            )}
+
+            <div className="줄">
+              <button onClick={() => 초안넣기(고른것)}>
+                이 초안을 물품설명에 넣기
+              </button>
+            </div>
+          </>
+        )}
+      </details>
+
       <textarea
         value={desc}
         onChange={(e) => setDesc(e.target.value)}
@@ -259,6 +380,15 @@ export default function App() {
         rows={6}
         placeholder="예: 폴리에스터 100% 직물로 만든 성인용 반팔 티셔츠. 무게 180g/m2, 편물이 아닌 직물."
       />
+
+      {/* 위 상자 안에도 같은 내용이 있지만 그건 접으면 사라진다.
+          "재질은 내가 채워야 한다"가 안 보이면 비어 있는 채로 분류가 돈다. */}
+      {초안 && 초안.빠진정보.length > 0 && (
+        <p className="빠진">
+          카탈로그에 없어서 비워 둔 항목: <b>{초안.빠진정보.join(", ")}</b>
+          {" — "}아시면 위에 직접 채워 주세요
+        </p>
+      )}
 
       {/* .줄 은 오른쪽 정렬이다. 그래서 **남은 횟수를 버튼보다 먼저** 둔다 —
           CSS 로 순서를 뒤집을 수도 있지만, 그러면 눈에 보이는 순서와

@@ -25,6 +25,11 @@ export type ClassifyIn = {
   게이트_충분: boolean;
   게이트_부족항목: string[];
   게이트_질문: string[];
+  // [0-a] 카탈로그에서 온 입력인가. '텍스트' / '카탈로그' / '카탈로그(수정)'.
+  // 초안을 그대로 썼는지 손봤는지가 추출 품질을 짐작할 유일한 단서다 —
+  // 카탈로그 경로는 봉인을 다 써서 정확도를 따로 잴 수 없다.
+  입력출처: string;
+  카탈로그_빠진정보: string[];
 };
 
 export type FeedbackIn = {
@@ -91,6 +96,24 @@ export type QuotaOut = {
   세션상한: number;
   일일남은: number;
   일일상한: number;
+  // 카탈로그 추출은 분류와 별개로 센다. 추출은 flash 1콜이라 싸고,
+  // 초안을 다시 뽑는 게 벌칙이 되면 마음에 안 드는 초안을 그냥 쓰게 된다.
+  추출남은: number;
+  추출상한: number;
+};
+
+// ---- [0-a] 카탈로그 ----
+
+export type 제품 = {
+  이름: string;
+  물품설명: string;
+  // 카탈로그에 없어서 못 채운 항목. 모델이 지어내지 않고 여기로 넘긴 것들이다.
+  빠진정보: string[];
+};
+
+export type CatalogOut = {
+  제품들: 제품[];
+  남은추출: number;
 };
 
 // ---- SSE 이벤트 ----

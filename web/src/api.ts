@@ -2,7 +2,8 @@
 // 화면(App.tsx)은 fetch 를 직접 부르지 않는다.
 
 import type {
-  ClassifyIn, ClassifyOut, FeedbackIn, GateIn, GateOut, QuotaOut, 단계이벤트,
+  CatalogOut, ClassifyIn, ClassifyOut, FeedbackIn, GateIn, GateOut, QuotaOut,
+  단계이벤트,
 } from "./types";
 
 // 개발 중에는 localhost, 배포에서는 Render 주소.
@@ -45,19 +46,25 @@ export class ApiError extends Error {
   }
 }
 
+/** 응답이 실패면 서버가 준 안내 문구를 담아 던진다.
+ *
+ *  FastAPI 는 { "detail": "..." } 로 준다. pydantic 검증 실패(422)면
+ *  detail 이 배열이라 문자열이 아니다 — 그건 우리 버그이므로 뭉뚱그린다.
+ */
+async function 실패면_던지기(r: Response): Promise<void> {
+  if (r.ok) return;
+  const d = await r.json().catch(() => ({}));
+  const 말 = typeof d.detail === "string" ? d.detail : "요청이 거부되었습니다.";
+  throw new ApiError(r.status, 말);
+}
+
 async function post<T>(경로: string, 본문: unknown): Promise<T> {
   const r = await fetch(BASE + 경로, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(본문),
   });
-  if (!r.ok) {
-    // FastAPI 는 { "detail": "..." } 로 준다. pydantic 검증 실패(422)면
-    // detail 이 배열이라 문자열이 아니다 — 그건 우리 버그이므로 뭉뚱그린다.
-    const d = await r.json().catch(() => ({}));
-    const 말 = typeof d.detail === "string" ? d.detail : "요청이 거부되었습니다.";
-    throw new ApiError(r.status, 말);
-  }
+  await 실패면_던지기(r);
   return r.json();
 }
 
@@ -72,6 +79,23 @@ export async function 잔여(): Promise<QuotaOut> {
   const 질의 = new URLSearchParams({ 세션id: 세션id() });
   const r = await fetch(`${BASE}/api/quota?${질의}`);
   if (!r.ok) throw new ApiError(r.status, "남은 횟수를 읽지 못했습니다.");
+  return r.json();
+}
+
+/** [0-a] 카탈로그 파일을 올려 물품설명 초안을 받는다.
+ *
+ *  **Content-Type 헤더를 직접 넣지 않는다.** FormData 를 주면 브라우저가
+ *  multipart/form-data 와 함께 boundary(각 파일의 경계 표시)까지 붙여 준다.
+ *  헤더를 손으로 쓰면 그 boundary 가 빠져서 서버가 본문을 못 읽는다.
+ */
+export async function 카탈로그(파일들: File[]): Promise<CatalogOut> {
+  const 폼 = new FormData();
+  폼.append("세션id", 세션id());
+  // 같은 이름으로 여러 번 append 하면 서버에서 배열(list[UploadFile])이 된다.
+  for (const f of 파일들) 폼.append("files", f);
+
+  const r = await fetch(BASE + "/api/catalog", { method: "POST", body: 폼 });
+  await 실패면_던지기(r);
   return r.json();
 }
 
@@ -106,11 +130,7 @@ export async function 분류(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(본문),
   });
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({}));
-    const 말 = typeof d.detail === "string" ? d.detail : "요청이 거부되었습니다.";
-    throw new ApiError(r.status, 말);
-  }
+  await 실패면_던지기(r);
   if (!r.body) throw new Error("스트림을 열 수 없습니다.");
 
   // 응답을 조금씩 읽는다. reader.read() 는 덩어리 하나를 기다렸다 준다.

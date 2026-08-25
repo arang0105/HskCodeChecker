@@ -177,6 +177,52 @@ summary { cursor: pointer; font-size: 0.9rem; color: var(--주색);
 .사례 { border-top: 1px solid #f0f1f6; padding: 10px 0; font-size: 0.9rem; }
 .사례품명 { color: var(--흐림); }
 
+/* ── [0-a] 카탈로그 ──────────────────────────────────── */
+/* 접힌 상태가 기본이라 요약 줄만 보인다. 펼쳤을 때만 상자처럼 보이게 한다. */
+.카탈로그 { margin: 0 0 16px; padding: 14px 16px;
+  border: 1px solid var(--테두리); border-radius: var(--R);
+  background: var(--연바탕); }
+.카탈로그 > summary { color: var(--글자); font-weight: 600; }
+.카탈로그 .캡션 { margin: 12px 0; }
+.카탈로그 .줄 { margin: 12px 0 0; }
+.카탈로그 .경고 { margin-top: 12px; }
+
+/* input[type=file] 은 브라우저가 그리는 버튼이라 손댈 수 있는 곳이 적다.
+   ::file-selector-button 으로 그 버튼만 따로 칠한다. */
+input[type="file"] {
+  width: 100%; font: inherit; font-size: 0.88rem; color: var(--흐림);
+  padding: 10px; background: #fff;
+  border: 1px dashed #c9cfe0; border-radius: var(--R);
+}
+input[type="file"]::file-selector-button {
+  font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  margin-right: 10px; padding: 7px 14px; border: 0; border-radius: 999px;
+  background: var(--주색연); color: var(--주색);
+}
+
+.고르기 { display: block; margin: 16px 0 0;
+  font-size: 0.85rem; font-weight: 600; color: var(--흐림); }
+.고르기 select {
+  display: block; width: 100%; margin-top: 6px;
+  font: inherit; color: var(--글자); background: #fff;
+  padding: 11px 12px; border: 1px solid var(--테두리); border-radius: var(--R);
+}
+.제품이름 { margin: 16px 0 0; font-size: 0.95rem; }
+
+/* 초안 원문. 사용자가 그대로 쓸지 고칠지 판단하는 자리라 본문 크기로 둔다. */
+.초안상자 {
+  margin-top: 10px; padding: 14px 16px; line-height: 1.7;
+  background: #fff; border: 1px solid var(--테두리); border-radius: var(--R);
+}
+
+/* 빠진 항목은 경고가 아니라 **할 일**이다. 빨강이 아니라 주황을 쓴다. */
+.빠진 {
+  margin: 10px 0 0; padding: 10px 14px; border-radius: var(--R);
+  background: var(--노랑연); color: var(--노랑);
+  font-size: 0.85rem; line-height: 1.6;
+}
+.빠진 b { color: var(--노랑); }
+
 /* 이전 결과 목록. 결과 카드 밖에 있으므로 여백을 직접 준다. */
 .이력 { margin: 24px 0 0; }
 .이력 .사례:first-of-type { border-top: 0; }
