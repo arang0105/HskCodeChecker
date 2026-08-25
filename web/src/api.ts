@@ -37,6 +37,10 @@ export function 유입(): string | null {
 
 // ---- 공통 ----
 
+/** 스트림이 결과 없이 끝났다. **일반 오류와 갈라 둔다** —
+ *  이것만 서버에 보고해서 빈도를 센다. 4xx/5xx 는 이미 서버가 알고 있다. */
+export class StreamDropped extends Error {}
+
 /** 서버가 4xx/5xx 를 주면 detail 문자열을 담아 던진다. */
 export class ApiError extends Error {
   status: number;
@@ -80,6 +84,17 @@ export async function 잔여(): Promise<QuotaOut> {
   const r = await fetch(`${BASE}/api/quota?${질의}`);
   if (!r.ok) throw new ApiError(r.status, "남은 횟수를 읽지 못했습니다.");
   return r.json();
+}
+
+/** 결과를 못 받고 끝났다고 서버에 알린다.
+ *
+ *  **실패해도 삼킨다.** 끊김을 알리려다 또 끊겼다고 화면에 두 번째 오류를
+ *  띄우면, 사용자는 무슨 일이 일어났는지 더 모르게 된다.
+ */
+export function 끊김보고(정보: {
+  desc: string; 단계: number; 경과: number; 사유: string;
+}): Promise<unknown> {
+  return post("/api/dropped", { ...정보, 세션id: 세션id() }).catch(() => null);
 }
 
 /** [0-a] 카탈로그 파일을 올려 물품설명 초안을 받는다.
@@ -165,6 +180,6 @@ export async function 분류(
 
   // 스트림이 결과 없이 끝났다는 것은 서버나 중간 프록시가 끊었다는 뜻이다.
   // 조용히 넘어가면 화면이 영원히 '처리 중'으로 남는다.
-  if (!결과) throw new Error("연결이 끊겼습니다. 다시 시도해 주세요.");
+  if (!결과) throw new StreamDropped("연결이 끊겼습니다. 다시 시도해 주세요.");
   return 결과;
 }
