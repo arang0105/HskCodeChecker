@@ -51,6 +51,12 @@ MODEL_DEV = "gemini-3.7-flash"
 # 우리 물품설명 최대가 3,137자라 한도 2048짜리 embedding-001 로는 부족하다.
 MODEL_EMBED = "models/gemini-embedding-2"
 
+# 배포된 API 주소. 주간 점검(src/weekly.py)이 이걸 찔러 콜드스타트를 미리 녹인다.
+#
+# **공개 URL 이라 코드에 둔다.** 비밀이 아닌 값까지 .env 로 빼면 "무엇이 비밀인지"가
+# 흐려진다. 환경변수로 덮어쓸 수는 있게 열어 뒀다 — 주소가 바뀌면 그때 쓴다.
+API_URL = os.getenv("API_URL", "https://hskcodechecker.onrender.com")
+
 # 경로
 DATA_DIR = ROOT / "data"
 RESULTS_DIR = ROOT / "results"
