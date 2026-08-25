@@ -44,6 +44,11 @@
 .히어로 .설명 { font-size: 1.05rem; color: rgba(255, 255, 255, .88);
   max-width: 40em; margin: 0 0 20px; }
 
+/* 카드 묶음 위 라벨. 카드만 보면 무슨 문제에서 잰 숫자인지 알 수 없다. */
+.숫자제목 { font-size: 0.8rem; color: rgba(255, 255, 255, .8);
+  margin: 0 0 8px; }
+.숫자제목 b { color: #fff; font-weight: 600; }
+
 .숫자들 { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
 .숫자 {
   background: rgba(255, 255, 255, .13); border: 1px solid rgba(255, 255, 255, .22);
