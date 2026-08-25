@@ -177,6 +177,13 @@ summary { cursor: pointer; font-size: 0.9rem; color: var(--주색);
 .사례 { border-top: 1px solid #f0f1f6; padding: 10px 0; font-size: 0.9rem; }
 .사례품명 { color: var(--흐림); }
 
+/* 경과 시간. 단계 목록과 구분되게 선 하나를 두고 아래에 둔다. */
+.경과 {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--테두리);
+  color: var(--흐림); font-size: 0.85rem;
+}
+.느림 { color: var(--노랑); font-weight: 600; }
+
 /* ── [0-a] 카탈로그 ──────────────────────────────────── */
 /* 접힌 상태가 기본이라 요약 줄만 보인다. 펼쳤을 때만 상자처럼 보이게 한다. */
 .카탈로그 { margin: 0 0 16px; padding: 14px 16px;
