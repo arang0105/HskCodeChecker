@@ -2,7 +2,7 @@
 // 화면(App.tsx)은 fetch 를 직접 부르지 않는다.
 
 import type {
-  ClassifyIn, ClassifyOut, FeedbackIn, GateIn, GateOut, 단계이벤트,
+  ClassifyIn, ClassifyOut, FeedbackIn, GateIn, GateOut, QuotaOut, 단계이벤트,
 } from "./types";
 
 // 개발 중에는 localhost, 배포에서는 Render 주소.
@@ -62,6 +62,18 @@ async function post<T>(경로: string, 본문: unknown): Promise<T> {
 }
 
 // ---- 엔드포인트 ----
+
+/** 남은 횟수를 읽는다. 화면이 처음 뜰 때와 분류가 끝난 뒤에 부른다.
+ *
+ *  **GET 이라 본문이 없다.** 세션id 를 주소 뒤에 붙이는데, URLSearchParams
+ *  가 한글 파라미터 이름까지 알아서 인코딩해 준다.
+ */
+export async function 잔여(): Promise<QuotaOut> {
+  const 질의 = new URLSearchParams({ 세션id: 세션id() });
+  const r = await fetch(`${BASE}/api/quota?${질의}`);
+  if (!r.ok) throw new ApiError(r.status, "남은 횟수를 읽지 못했습니다.");
+  return r.json();
+}
 
 export function 게이트(desc: string): Promise<GateOut> {
   const 본문: GateIn = { desc, 세션id: 세션id() };

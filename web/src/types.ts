@@ -83,6 +83,16 @@ export type ClassifyOut = {
   남은횟수: number;
 };
 
+// GET /api/quota 의 응답.
+// **막는 값이 아니라 보여 주는 값이다** — 실제 차단은 서버가 분류 시점에
+// 다시 판단해서 429 로 알려준다. 화면이 들고 있는 숫자는 언제나 조금 낡았다.
+export type QuotaOut = {
+  세션남은: number;
+  세션상한: number;
+  일일남은: number;
+  일일상한: number;
+};
+
 // ---- SSE 이벤트 ----
 // event: 단계 / event: 결과 / event: 오류 세 가지가 온다.
 

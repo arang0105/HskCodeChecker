@@ -13,7 +13,8 @@
 
 import { useEffect, useState } from "react";
 import * as api from "./api";
-import type { ClassifyOut, GateOut, 단계이벤트 } from "./types";
+import type { ClassifyOut, GateOut, QuotaOut, 단계이벤트 } from "./types";
+import { 이력읽기, 이력쓰기, 이력비우기, 때표기, type 이력항목 } from "./history";
 import "./App.css";
 
 /** 8517130000 → 8517.13-0000. 신고서에서 쓰는 모양이다.
@@ -29,6 +30,17 @@ function 세번표기(코드: string | null | undefined): string {
   if (숫자.length !== 10) return 코드 || "—";   // 10자리가 아니면 손대지 않는다
   return `${숫자.slice(0, 4)}.${숫자.slice(4, 6)}-${숫자.slice(6)}`;
 }
+
+// 예시 두 개. **app.py:41-45 와 같은 문장이다** — 두 앱이 다른 예시를 들면
+// 지인에게 보여줄 때 같은 도구로 안 보인다.
+//
+// 두 번째가 일부러 부실한 이유 — 품번만 적힌 입력에서 [0]게이트가 되묻는
+// 것을 보여주는 자리다. baseline 에서 품번only 7건의 되묻기율은 14.3% 였고,
+// 그걸 고친 게 이 도구가 하는 일 중 하나다.
+const 예시_충분 =
+  "폴리프로필렌(PP) 재질의 일회용 도시락 용기. 뚜껑 일체형, 용량 700ml, " +
+  "전자레인지 사용 가능. 표면 인쇄 없음. 사출 성형품.";
+const 예시_부족 = "P/N 4471-BK / 1EA / MADE IN VIETNAM";
 
 const 단계이름 = [
   "6자리 후보 뽑기",
@@ -52,6 +64,12 @@ export default function App() {
   const [메모, set메모] = useState("");
   const [보냈다, set보냈다] = useState(false);
   const [저장중, set저장중] = useState(false);
+  const [잔여, set잔여] = useState<QuotaOut | null>(null);
+
+  // **useState 에 값이 아니라 함수를 넘겼다.** 그냥 이력읽기() 를 쓰면
+  // 화면을 다시 그릴 때마다 localStorage 를 읽는다(결과는 버려진다).
+  // 함수를 넘기면 React 가 **맨 처음 한 번만** 부른다.
+  const [이력, set이력] = useState<이력항목[]>(이력읽기);
 
   /** 메모를 고치는 순간 "저장했습니다"는 더 이상 사실이 아니다.
    *  초록 문구를 그대로 두면 고친 내용까지 저장된 줄 안다. */
@@ -73,6 +91,20 @@ export default function App() {
     // 돌려주는 함수는 뒷정리다. 처리중이 false 가 되면 React 가 이걸 부른다.
     return () => window.removeEventListener("beforeunload", 막기);
   }, [처리중]);
+
+  // 화면이 처음 뜰 때 남은 횟수를 읽는다. **[] 는 "한 번만" 이라는 뜻이다.**
+  //
+  // 실패해도 조용히 넘어간다 — 이 숫자가 없다고 분류를 못 하는 것은 아니고,
+  // 잠들어 있던 API 가 깨어나는 20여 초 동안 화면에 오류를 띄울 이유가 없다.
+  // (겸사겸사 API 를 미리 깨우는 효과도 있다. 화면과 API 를 나눠 배포한
+  //  이유가 화면이 API 를 기다리지 않게 하려는 것이었다.)
+  useEffect(() => {
+    api.잔여().then(set잔여).catch(() => {});
+  }, []);
+
+  function 잔여갱신() {
+    api.잔여().then(set잔여).catch(() => {});
+  }
 
   function 오류처리(e: unknown) {
     const 말 = e instanceof Error ? e.message : "알 수 없는 오류입니다.";
@@ -103,9 +135,29 @@ export default function App() {
       );
       set결과(r);
       if (r.남은횟수 <= 0) set잠김(true);
+      // 오류가 아닐 때만 목록에 남긴다. 실패한 건까지 "이전 결과" 로
+      // 쌓이면 목록을 믿을 수 없게 된다.
+      if (!r.오류 && r.코드) {
+        set이력(이력쓰기({
+          때: Date.now(),
+          desc: desc.trim().slice(0, 80),
+          코드: r.코드,
+          확신도: r.확신도,
+        }));
+      }
+      잔여갱신();
     } catch (e) {
       오류처리(e);
     }
+  }
+
+  // 예시를 넣으면 **앞 입력에 대한 되물음과 오류는 지운다.** 남겨 두면
+  // 방금 바꾼 글에 대한 안내인 줄 읽힌다. 직전 결과는 그대로 둔다 —
+  // 아직 새로 분류한 게 아니므로 지울 이유가 없다.
+  function 예시넣기(글: string) {
+    setDesc(글);
+    set게이트(null);
+    set오류(null);
   }
 
   async function 눌림() {
@@ -151,6 +203,14 @@ export default function App() {
   }
 
   const 되물음 = 게이트 !== null && !게이트.충분 && 결과 === null;
+
+  // 남은 횟수는 두 곳에서 온다. **분류가 끝났으면 그쪽이 더 최신이다** —
+  // /api/quota 는 화면이 뜰 때 읽은 값이라 방금 쓴 1회가 빠져 있다.
+  const 남은 = 결과?.남은횟수 ?? 잔여?.세션남은 ?? null;
+
+  // 방금 그린 결과가 목록 맨 위에 또 있으면 같은 것이 두 번 보인다.
+  // app.py:531 이 이력[1:] 을 쓴 것과 같은 이유다.
+  const 지난것 = 결과 && !결과.오류 ? 이력.slice(1) : 이력;
 
   return (
     // <> </> 는 Fragment 다. JSX 는 최상위 요소가 하나여야 하는데, 그것 때문에
@@ -204,7 +264,15 @@ export default function App() {
           CSS 로 순서를 뒤집을 수도 있지만, 그러면 눈에 보이는 순서와
           Tab 키가 도는 순서가 어긋난다. */}
       <div className="줄">
-        {결과 && <span className="남은">남은 횟수 {결과.남은횟수}회</span>}
+        {/* 예시 버튼은 곁들이라 **왼쪽으로 민다**(CSS margin-right: auto).
+            채운 버튼 셋을 나란히 두면 무엇을 눌러야 할지 알 수 없다. */}
+        <div className="예시들">
+          <button className="보조" onClick={() => 예시넣기(예시_충분)}
+                  disabled={처리중 || 잠김}>예시: 상세 설명</button>
+          <button className="보조" onClick={() => 예시넣기(예시_부족)}
+                  disabled={처리중 || 잠김}>예시: 품번만</button>
+        </div>
+        {남은 !== null && <span className="남은">남은 횟수 {남은}회</span>}
         <button onClick={눌림} disabled={처리중 || 잠김 || !desc.trim()}>
           {처리중 ? "분류하는 중…" : "분류하기"}
         </button>
@@ -244,7 +312,35 @@ export default function App() {
         평가={평가} set평가={set평가}
         메모={메모} set메모={메모바꾸기}
         보냈다={보냈다} 저장중={저장중} 보내기={의견보내기} />}
+
+      {지난것.length > 0 && (
+        <details className="이력">
+          <summary>이전 결과 {지난것.length}건</summary>
+          {지난것.map((h) => (
+            <div key={h.때} className="사례">
+              <b>{세번표기(h.코드)}</b>
+              <span className="초"> {h.확신도 ?? "—"} · {때표기(h.때)}</span>
+              <div className="사례품명">{h.desc}</div>
+            </div>
+          ))}
+          <div className="줄">
+            <button className="보조"
+                    onClick={() => { 이력비우기(); set이력([]); }}>
+              목록 지우기
+            </button>
+          </div>
+        </details>
+      )}
       </main>
+
+      <footer className="쪽 바닥">
+        {잔여 && (
+          <p className="사용량">
+            남은 횟수 — 이 브라우저 <b>{잔여.세션남은}/{잔여.세션상한}</b>
+            {" · "}오늘 전체 <b>{잔여.일일남은}/{잔여.일일상한}</b>
+          </p>
+        )}
+      </footer>
     </>
   );
 }
@@ -263,6 +359,15 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
   보내기: (평가: "up" | "down" | null, 메모: string) => void;
 }) {
   if (결과.오류) return <div className="경고">{결과.오류}</div>;
+
+  // 앞 6자리는 [3]재정렬이 정한 1순위다. 최종 코드에서 잘라 쓰지 않는 이유 —
+  // 두 값이 어긋나면 그 사실이 화면에 드러나야 한다.
+  const 앞6 = 결과.순위[0] ?? "";
+
+  // 두 단계의 확인 포인트를 합치고 중복만 없앤다.
+  // **Set 은 넣은 순서를 기억한다** — 파이썬 dict.fromkeys 와 같은 일을 하고,
+  // [...집합] 은 그걸 다시 배열로 편다(스프레드).
+  const 포인트 = [...new Set([...결과.확인포인트, ...결과.확정확인포인트])];
 
   function 엄지(v: "up" | "down") {
     set평가(v);
@@ -299,15 +404,63 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
         </p>
       )}
 
-      {결과.top근거 && <p className="근거"><b>순위 근거</b><br />{결과.top근거}</p>}
-      {결과.확정근거 && <p className="근거"><b>세번 근거</b><br />{결과.확정근거}</p>}
-
-      {결과.확인포인트.length > 0 && (
-        <div className="확인">
-          <b>사람이 확인할 점</b>
-          <ul>{결과.확인포인트.map((p, i) => <li key={i}>{p}</li>)}</ul>
+      {/* **코드를 앞 6자리와 뒤 4자리로 나눠 보여준다.** 서로 다른 단계가 정한
+          값이고 실무에서 틀리는 자리도 다르다 — baseline 에서 호 경합(6자리)
+          41.7%, 한국 고유 세번(10자리) 25.0% 로 원인이 갈렸다.
+          app.py:396-411 과 같은 구성이다. */}
+      {(결과.top근거 || 결과.확정근거 || 결과.자동확정) && (
+        <div className="근거">
+          <b>왜 이 코드인가</b>
+          <ul>
+            {결과.top근거 && (
+              <li>
+                <b>앞 6자리 {앞6}</b> — {결과.top근거}
+                {결과.top결정례 && 결과.top결정례 !== "없음" && (
+                  <div className="사례품명">근거로 삼은 결정례: {결과.top결정례}</div>
+                )}
+              </li>
+            )}
+            {결과.확정근거 ? (
+              <li><b>뒤 4자리</b> — {결과.확정근거}</li>
+            ) : 결과.자동확정 ? (
+              <li>
+                <b>뒤 4자리</b> — 이 6자리 아래 신고 가능한 10자리가
+                하나뿐이라 자동으로 정해졌습니다.
+              </li>
+            ) : null}
+          </ul>
         </div>
       )}
+
+      {포인트.length > 0 && (
+        <div className="확인">
+          <b>사람이 확인할 점</b>
+          <ul>{포인트.map((p, i) => <li key={i}>{p}</li>)}</ul>
+        </div>
+      )}
+
+      {/* 선택지가 하나뿐이면 고른 게 아니라 정해진 것이므로 안 띄운다. */}
+      {!결과.자동확정 && 결과.선택지수 > 0 && (
+        <p className="캡션">
+          10자리 선택지 {결과.선택지수}개 중에서 골랐습니다.
+          {결과.확정확신도 && ` ([4]단계 확신도 ${결과.확정확신도})`}
+        </p>
+      )}
+
+      <details>
+        <summary>6자리 후보 3개와 판단 근거</summary>
+        {결과.ranked.length > 0 ? (
+          결과.ranked.map((r, i) => (
+            <div key={i} className="사례">
+              <b>{i + 1}. {r.code}</b>{r.reason && <> — {r.reason}</>}
+              <div className="사례품명">근거 결정례: {r.근거결정례 || "없음"}</div>
+            </div>
+          ))
+        ) : (
+          // 재정렬이 ranked 를 못 준 경우다. 순위 배열은 그때도 채워진다.
+          <div className="사례">{결과.순위.join(" · ") || "—"}</div>
+        )}
+      </details>
 
       <details>
         <summary>근거 결정례 {결과.결정례.length}건</summary>
@@ -318,6 +471,13 @@ function 결과화면({ 결과, 평가, set평가, 메모, set메모, 보냈다,
           </div>
         ))}
       </details>
+
+      {/* **이 문장을 빼지 않는다.** 이 도구는 검증 보조지 판정이 아니다.
+          app.py:525-527 과 같은 문장을 쓴다. */}
+      <p className="참고">
+        <b>참고용입니다.</b> 신고 전 관세사 확인 또는 관세청 품목분류
+        사전심사를 받으세요.
+      </p>
 
       <div className="피드백">
         <b>이 결과가 맞았나요?</b>
