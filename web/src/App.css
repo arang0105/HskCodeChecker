@@ -24,22 +24,6 @@
 
 .쪽 { max-width: 760px; margin: 0 auto; padding: 0 20px; }
 
-/* ── 상단 띠 ─────────────────────────────────────────────
-   히어로(파란 면) 위에 흰 알약이 떠 있는 모양이다. */
-.띠 { padding: 18px 20px 0; }
-.띠속 {
-  max-width: 760px; margin: 0 auto;
-  display: flex; align-items: center;
-  background: #fff; border-radius: 999px; padding: 14px 22px;
-  box-shadow: 0 6px 20px rgba(10, 20, 60, .12);
-  /* **글자색을 되돌린다.** 이 알약은 .히어로 안에 있어서 color: #fff 를
-     물려받는다. 흰 배경에 흰 글자가 되어 로고가 안 보였다. */
-  color: var(--글자);
-}
-.로고 { font-weight: 600; font-size: 0.95rem; display: flex;
-  align-items: center; gap: 9px; }
-.점 { width: 9px; height: 9px; border-radius: 50%;
-  background: var(--주색); display: inline-block; }
 /* ── 히어로 ──────────────────────────────────────────────
    아래쪽 두 모서리만 둥글려 흰 본문 위에 얹힌 판처럼 보이게 한다. */
 .히어로 {
@@ -51,7 +35,7 @@
   background-image: radial-gradient(rgba(255, 255, 255, .16) 1px, transparent 1px);
   background-size: 22px 22px;
 }
-.히어로속 { padding-top: 40px; }
+.히어로속 { padding-top: 56px; }
 .히어로 h1 {
   font-size: clamp(1.9rem, 5vw, 2.6rem);   /* 화면 폭에 따라 최소~최대 사이에서 변한다 */
   line-height: 1.2; font-weight: 700; letter-spacing: -0.02em;
@@ -194,10 +178,7 @@ summary { cursor: pointer; font-size: 0.9rem; color: var(--주색);
 
    2026-08-25 폰 확인에서 나온 것들을 고쳤다 — 깨지지는 않았지만 읽기 힘들었다. */
 @media (max-width: 520px) {
-  .띠 { padding: 12px 14px 0; }
-  .띠속 { padding: 12px 18px; }
-  .로고 { font-size: 0.85rem; }
-  .히어로속 { padding-top: 28px; }
+  .히어로속 { padding-top: 36px; }
   .히어로 { padding-bottom: 26px; }
   .쪽 { padding: 0 16px; }
 

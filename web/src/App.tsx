@@ -161,13 +161,9 @@ export default function App() {
           React 로 옮기면 그 공짜가 사라진다. */}
       {처리중 && <div className="덮개" />}
 
+      {/* 상단 알약(로고 띠)은 뺐다. h1 이 이름 역할을 하고 브라우저 탭 제목에도
+          같은 문구가 있어 중복이었다. 세로도 줄어 입력창이 더 빨리 보인다. */}
       <section className="히어로">
-        <header className="띠">
-          <div className="띠속">
-            <span className="로고"><span className="점" />HS코드 분류 검증 보조</span>
-          </div>
-        </header>
-
         <div className="쪽 히어로속">
           <h1>HS 세번을,<br />근거와 함께.</h1>
           <p className="설명">
