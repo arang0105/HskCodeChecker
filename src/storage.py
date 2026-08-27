@@ -392,13 +392,20 @@ def daily_add(날짜, delta, path=None):
     return 새값
 
 
-def session_count(세션id, path=None):
-    """그 브라우저가 지금까지 분류한 건수. 세션 상한(5회)을 세는 데 쓴다.
+def session_count(세션id, 날짜, path=None):
+    """그 브라우저가 **그 날짜에** 분류한 건수. 세션 상한(5회)을 세는 데 쓴다.
 
     **Streamlit 앱은 이 함수가 필요 없다.** 거기서는 st.session_state 에
     분류횟수를 들고 있으면 됐다 — 서버가 세션을 메모리에 붙들고 있기 때문이다.
     FastAPI 에는 그런 게 없다. 브라우저가 만든 익명 uuid4 를 매 요청에 실어
     보내면, 서버는 그 값으로 runs 표를 세는 수밖에 없다.
+
+    **날짜를 받는 이유 (2026-08-27 에 고쳤다).** 처음에는 날짜 없이 세션id 만
+    세었다. 그런데 화면이 세션id 를 localStorage 에 두므로(web/src/api.ts:23)
+    브라우저를 닫아도 값이 남고, 결국 **한 브라우저가 평생 5회**가 됐다.
+    Streamlit 때는 st.session_state 라 새로고침만 해도 풀렸으니, FastAPI 로
+    옮기면서 의도한 적 없이 방어가 세진 것이다. 지인에게 링크를 돌려 피드백을
+    받아야 하는데 5회를 쓴 사람이 영영 막히면 측정 채널이 스스로 잠긴다.
 
     **오류로 끝난 건은 빼고 센다.** app.py 가 실패했을 때 분류횟수를 1 되돌리는
     것과 같은 처리다(app.py:673). 안 빼면 서버가 죽어서 못 받은 답 때문에
@@ -411,10 +418,15 @@ def session_count(세션id, path=None):
     conn, pg = _connect(path)
     with closing(conn) as conn, conn:
         cur = conn.cursor()
+        # 시각은 '2026-08-27T09:14:32+09:00' 형태의 TEXT 라(save_run 참조)
+        # 앞 10 글자가 곧 KST 날짜다. LIKE 로 앞부분만 맞춰 보면 SQLite 와
+        # Postgres 어느 쪽에서도 같은 SQL 이 돈다 — 날짜 함수는 방언이 갈린다.
+        # 1 건뿐인 옛 형식('2026-08-21T08:17:01', 오프셋 없음)도 앞 10 글자는
+        # 같으므로 함께 잡힌다.
         cur.execute(
             f"SELECT count(*) AS n FROM runs WHERE 세션id = {_ph(pg)} "
-            f"AND 오류 IS NULL",
-            (세션id,),
+            f"AND 오류 IS NULL AND 시각 LIKE {_ph(pg)}",
+            (세션id, f"{날짜}%"),
         )
         행 = cur.fetchone()
     # sqlite3.Row 와 psycopg2 의 RealDictRow 둘 다 이름으로 꺼낼 수 있다.

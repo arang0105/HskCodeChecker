@@ -146,9 +146,13 @@ def 일일_더하기(delta):
 
 
 def 세션_분류횟수(세션id):
-    """그 브라우저가 분류한 건수. **DB 가 안 잡히면 0 (fail-open).**"""
+    """그 브라우저가 **오늘** 분류한 건수. **DB 가 안 잡히면 0 (fail-open).**
+
+    날짜 키는 일일 카운터와 같은 _오늘() 을 쓴다. 두 상한이 서로 다른 자정에
+    풀리면 "남은 횟수" 두 줄이 어긋나 보인다.
+    """
     try:
-        return storage.session_count(세션id)
+        return storage.session_count(세션id, _오늘())
     except Exception as e:
         print(f"[세션 카운터] 읽기 실패 — {type(e).__name__}", flush=True)
         return 0
