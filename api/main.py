@@ -507,32 +507,51 @@ def 카탈로그(세션id: str = Form("", max_length=64),
                 detail=f"'{f.filename}' 은 읽을 수 없는 형식입니다. PDF·PNG·JPG 만 됩니다.")
         파일들.append((f.file.read(), mime))
 
-    # 차감을 먼저 한다. 실패하면 아래에서 되돌린다.
+    # 차감을 먼저 한다. 성공하지 못하면 아래 finally 가 되돌린다.
     추출횟수[세션id] = 추출횟수.get(세션id, 0) + 1
     일일_더하기(1, "추출")
+
+    성공 = False
     try:
-        r = pipeline.catalog_extract(파일들, model=config.MODEL_DEV)
-    except Exception as e:
-        추출횟수[세션id] -= 1
-        일일_더하기(-1, "추출")
-        print(f"[카탈로그] 실패 — {type(e).__name__}: {e}", flush=True)
-        raise HTTPException(status_code=502,
-                            detail="카탈로그를 읽는 중 문제가 생겼습니다. "
-                                   "잠시 후 다시 시도해 주세요.")
+        try:
+            r = pipeline.catalog_extract(파일들, model=config.MODEL_DEV)
+        except Exception as e:
+            # **원인 문자열을 사용자에게 던지지 않는다.** 종류 이름만 남긴다 —
+            # 접속 실패 메시지에는 호스트나 키 조각이 섞여 나올 수 있다.
+            print(f"[카탈로그] 실패 — {type(e).__name__}: {e}", flush=True)
+            raise HTTPException(status_code=502,
+                                detail="카탈로그를 읽는 중 문제가 생겼습니다. "
+                                       "잠시 후 다시 시도해 주세요.")
 
-    if r["읽기실패"]:
-        # 읽지 못한 것은 사용자 잘못이 아니다. 되돌려 준다.
-        추출횟수[세션id] -= 1
-        일일_더하기(-1, "추출")
-        raise HTTPException(status_code=422,
-                            detail="카탈로그에서 제품을 찾지 못했습니다. "
-                                   "제품 사양이 보이는 페이지로 다시 올리거나, "
-                                   "아래에 직접 입력해 주세요.")
+        if r["읽기실패"]:
+            # 읽지 못한 것은 사용자 잘못이 아니다. 되돌려 준다.
+            raise HTTPException(status_code=422,
+                                detail="카탈로그에서 제품을 찾지 못했습니다. "
+                                       "제품 사양이 보이는 페이지로 다시 올리거나, "
+                                       "아래에 직접 입력해 주세요.")
 
-    return CatalogOut(
-        제품들=[제품Out(**p) for p in r["제품들"]],
-        남은추출=추출_남은(세션id),
-    )
+        # **응답을 다 만든 뒤에 성공으로 친다.** 위 두 줄을 바꿔 놓으면
+        # CatalogOut 조립이 터졌을 때 finally 가 성공으로 보고 안 되돌린다.
+        응답 = CatalogOut(
+            제품들=[제품Out(**p) for p in r["제품들"]],
+            남은추출=추출_남은(세션id),
+        )
+        성공 = True
+        return 응답
+    finally:
+        # **되돌리는 코드를 여기 한 곳에만 둔다.**
+        #
+        # 고치기 전에는 같은 두 줄이 except 안과 읽기실패 분기에 **두 벌**로
+        # 있었다. 그 방식의 문제는 벌수가 아니라, **거기 안 적힌 실패는 안
+        # 되돌려진다**는 것이다 — 위 CatalogOut 조립이나 추출_남은() 이 터지면
+        # 두 분기 어디에도 안 걸려서 차감만 남았다. 상한이 실제보다 빨리
+        # 차오르고, 사용자는 쓰지도 않은 횟수를 잃는다.
+        #
+        # finally 는 어떻게 빠져나가든 돈다. except 를 하나 더 만들어도
+        # 여기를 고칠 필요가 없다는 게 두 벌과의 진짜 차이다.
+        if not 성공:
+            추출횟수[세션id] -= 1
+            일일_더하기(-1, "추출")
 
 
 @app.post("/api/gate", response_model=GateOut)
