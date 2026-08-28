@@ -84,12 +84,57 @@ def build_index(dim=None):
     return vectors
 
 
+# 코퍼스에 반드시 들어 있어야 하는 표시 건수. load_index() 가 이걸로 검사한다.
+# 코퍼스는 늘어날 수 있어도(결정례를 더 모으면) 이 둘은 고정이다 —
+# 평가셋은 baseline 을 잰 29건, 회귀셋은 시드를 고정해 뽑은 20건이다.
+평가셋_건수 = 29
+회귀셋_건수 = 20
+
+
+def _표시_검사(vectors, meta):
+    """검색에서 빼야 할 건들이 실제로 표시돼 있는지 본다. 아니면 죽인다.
+
+    **이게 이 프로젝트에서 조용히 틀릴 수 있는 거의 유일한 곳이다.**
+    search() 의 제외는 `평가셋포함 == "N"` 같은 비교라, 열이 없으면 KeyError 로
+    시끄럽게 죽고 값이 비면 제외 쪽으로 넘어간다 — 둘 다 안전한 실패다.
+    위험한 건 하나뿐이다. **코퍼스를 다시 만들다 표시를 잃는 것.** 그러면
+    평가셋 29건이 검색 대상에 들어가고, 정답을 그대로 베낀 점수가 나오는데
+    아무 데서도 안 걸린다. 부풀려진 숫자를 그대로 인용하게 된다.
+
+    **assert 를 안 쓴다.** assert 는 python -O 로 통째로 꺼진다(자바에서 -ea
+    없이 돌리면 assert 가 안 도는 것과 같다). 끌 수 있는 문법으로 안전장치를
+    만들면 안 된다.
+
+    행 수 일치를 같이 보는 이유 — 벡터와 표는 **줄 번호로만** 짝지어져 있다.
+    어긋나면 3번 결정례의 점수에 5번 결정례의 품명이 붙어 나오는데, 그건
+    오류가 아니라 그럴듯한 오답으로 보인다.
+    """
+    if len(vectors) != len(meta):
+        raise RuntimeError(
+            f"벡터 {len(vectors)}행과 표 {len(meta)}행이 어긋납니다. "
+            f"{index_path().name} 와 {INDEX_META.name} 를 같이 다시 만드세요.")
+
+    for 열, 기대 in (("평가셋포함", 평가셋_건수), ("회귀셋", 회귀셋_건수)):
+        if 열 not in meta.columns:
+            raise RuntimeError(f"{INDEX_META.name} 에 '{열}' 열이 없습니다.")
+        # 불리언 배열의 sum 은 True 의 개수다. measure_coverage 의 정직.sum() 과 같다.
+        실제 = int((meta[열] == "Y").sum())
+        if 실제 != 기대:
+            raise RuntimeError(
+                f"'{열}' 이 Y 인 행이 {실제}건입니다 (있어야 할 값 {기대}건). "
+                f"검색에서 빼야 할 건이 코퍼스에 섞여 있으면 점수가 부풀려집니다. "
+                f"data/결정례.csv 의 표시를 확인하고 build_index() 를 다시 도세요.")
+
+
 def load_index(dim=None):
-    """저장해 둔 벡터와 원본 표를 읽는다."""
+    """저장해 둔 벡터와 원본 표를 읽는다. **읽으면서 표시를 검사한다.**"""
     path = index_path(dim)
     if not path.exists():
         raise FileNotFoundError(f"먼저 build_index({dim or DIM}) 를 실행하세요.")
-    return np.load(path), pd.read_csv(INDEX_META, dtype=str).fillna("")
+    vectors = np.load(path)
+    meta = pd.read_csv(INDEX_META, dtype=str).fillna("")
+    _표시_검사(vectors, meta)
+    return vectors, meta
 
 
 def search(query, top_k=5, include_eval=False, index=None, dim=None):
