@@ -617,18 +617,9 @@ def _분류_흐름(req):
     # **차감은 여기서 한 번만.** 게이트에서 되물은 건은 차감하지 않는다.
     일일_더하기(1)
 
-    # **착수를 남긴다.** 지금까지 print 는 전부 실패만 찍었다. 그래서 화면이
-    # "연결이 끊겼습니다" 를 띄웠을 때 요청이 서버에 닿기는 했는지조차
-    # 알 수 없었다 — runs 에는 끝까지 간 건만 들어가기 때문이다.
-    #
-    # 착수만 있고 완료가 없으면 처리 중에 죽은 것이고, 착수조차 없으면
-    # 요청이 안 닿은 것이다. 그 갈림길이 이 두 줄로 갈린다.
-    #
-    # **세션id 는 앞 8자만 찍는다.** 로그로 사람을 되짚을 이유가 없고,
-    # 같은 브라우저인지 가리는 데는 8자면 충분하다.
-    print(f"[분류] 착수 세션={req.세션id[:8]} 글자수={len(desc)}", flush=True)
-
     오류 = None
+    완료 = False          # 결과를 만들어 냈는가. 아래 finally 가 이걸 보고 갈린다
+    마지막 = 0            # 끝낸 단계 번호. 중단됐을 때 어디까지 갔는지 남긴다
     first = third = fourth = None
     hits, 순위, ranked = [], [], []
 
@@ -638,112 +629,201 @@ def _분류_흐름(req):
             d["초"] = round(초, 1)
         return ("단계", d)
 
-    try:
-        yield 단계(1, "6자리 후보 3개를 뽑는 중", "시작")
-        # use_cache=False — 앱이 만든 항목이 측정용 후보 캐시에 섞이지 않게 한다.
-        first = pipeline.generate_candidates(
-            desc, model=config.MODEL_DEV, use_cache=False)
-        후보 = first["candidates"]
-        if not 후보:
-            raise RuntimeError("후보를 만들지 못했습니다")
-        yield 단계(1, "6자리 후보 3개를 뽑는 중", "완료", first.get("elapsed"))
+    def 기록만들기(오류):
+        """runs 에 넣을 한 행. **정상 종료와 중단이 같은 조립기를 쓴다.**
 
-        yield 단계(2, "비슷한 과거 결정례를 찾는 중", "시작")
-        t = time.time()
-        hits = search.search(desc, top_k=5, index=자원["인덱스"])
-        yield 단계(2, "비슷한 과거 결정례를 찾는 중", "완료", time.time() - t)
+        바깥 변수(first·third·fourth·hits·순위)를 인자로 받지 않는다. 중첩
+        함수는 **부르는 시점**의 바깥 값을 읽기 때문이다 — 위 `단계()` 와 같다.
+        자바의 지역 클래스가 사실상 final 인 지역변수만 볼 수 있던 것과 달리,
+        파이썬은 읽기만 할 거면 제한이 없다.
 
-        yield 단계(3, "결정례를 근거로 순위를 다시 판단하는 중", "시작")
-        third = pipeline.rerank(desc, 후보, hits, model=config.MODEL_MAIN)
-        # 재정렬이 깨졌으면 1차 순서를 그대로 쓴다. 한 단계가 실패해도 답은 낸다.
-        순위 = third["codes"] or [c["code"] for c in 후보]
-        ranked = (third.get("data") or {}).get("ranked", [])
-        yield 단계(3, "결정례를 근거로 순위를 다시 판단하는 중", "완료",
-                  third.get("elapsed"))
+        **조립을 두 벌로 두지 않는 이유** — 중단된 건도 어디까지 갔는지(후보1차·
+        검색결과·토큰)를 정상 건과 똑같이 알고 있다. 두 벌이면 한쪽만 고쳐서
+        두 기록이 갈리고, 그걸 알아챌 방법이 없다.
+        """
+        def 합(키):
+            """세 단계의 토큰·시간을 더한다. 없는 단계는 0 으로 친다."""
+            return sum((x or {}).get(키, 0) for x in (first, third, fourth))
 
-        yield 단계(4, "10자리 세번을 고르는 중", "시작")
-        fourth = pipeline.finalize(desc, 순위[0], table=자원["세번표"],
-                                   model=config.MODEL_DEV)
-        yield 단계(4, "10자리 세번을 고르는 중", "완료", fourth.get("elapsed"))
-    except Exception as e:
-        # 원인 문자열은 DB 와 로그에만. 화면에는 안내만 간다.
-        오류 = f"{type(e).__name__}: {e}"
-        print(f"[분류] 실패 — {오류}", flush=True)
-        일일_더하기(-1)          # 실패했으면 차감을 되돌린다
+        d3 = (third.get("data") or {}) if third else {}
+        d4 = (fourth.get("data") or {}) if fourth else {}
 
-    def 합(키):
-        """세 단계의 토큰·시간을 더한다. 없는 단계는 0 으로 친다."""
-        return sum((x or {}).get(키, 0) for x in (first, third, fourth))
+        return {
+            "세션id": req.세션id,
+            "유입": req.유입,
+            "물품설명": desc,
+            "입력출처": (req.입력출처
+                      if req.입력출처 in ("텍스트", "카탈로그", "카탈로그(수정)")
+                      else "텍스트"),
+            "카탈로그_빠진정보": req.카탈로그_빠진정보[:20],
+            "게이트_충분": req.게이트_충분,
+            "게이트_부족항목": req.게이트_부족항목,
+            "게이트_질문": req.게이트_질문,
+            "강행": req.강행,
+            "후보1차": [c["code"] for c in (first or {}).get("candidates", [])],
+            "검색결과": [{"참조번호": h["참조번호"], "score": round(h["score"], 4)}
+                       for h in hits],
+            "재정렬": 순위,
+            "확신도": d3.get("confidence"),
+            "확인포인트": d3.get("check_points", []),
+            "최종10자리": (fourth or {}).get("code", ""),
+            "확정근거": d4.get("reason"),
+            "확정확신도": d4.get("confidence"),
+            "선택지수": (fourth or {}).get("선택지수", 0),
+            "자동확정": (fourth or {}).get("auto", False),
+            "모델_재정렬": config.MODEL_MAIN,
+            "elapsed": round(합("elapsed"), 1),
+            "in_tokens": 합("in_tokens"),
+            "billed_out": 합("billed_out"),
+            "오류": 오류,
+        }
 
-    d3 = (third.get("data") or {}) if third else {}
-    d4 = (fourth.get("data") or {}) if fourth else {}
-
-    기록 = {
-        "세션id": req.세션id,
-        "유입": req.유입,
-        "물품설명": desc,
-        "입력출처": (req.입력출처
-                  if req.입력출처 in ("텍스트", "카탈로그", "카탈로그(수정)")
-                  else "텍스트"),
-        "카탈로그_빠진정보": req.카탈로그_빠진정보[:20],
-        "게이트_충분": req.게이트_충분,
-        "게이트_부족항목": req.게이트_부족항목,
-        "게이트_질문": req.게이트_질문,
-        "강행": req.강행,
-        "후보1차": [c["code"] for c in (first or {}).get("candidates", [])],
-        "검색결과": [{"참조번호": h["참조번호"], "score": round(h["score"], 4)}
-                   for h in hits],
-        "재정렬": 순위,
-        "확신도": d3.get("confidence"),
-        "확인포인트": d3.get("check_points", []),
-        "최종10자리": (fourth or {}).get("code", ""),
-        "확정근거": d4.get("reason"),
-        "확정확신도": d4.get("confidence"),
-        "선택지수": (fourth or {}).get("선택지수", 0),
-        "자동확정": (fourth or {}).get("auto", False),
-        "모델_재정렬": config.MODEL_MAIN,
-        "elapsed": round(합("elapsed"), 1),
-        "in_tokens": 합("in_tokens"),
-        "billed_out": 합("billed_out"),
-        "오류": 오류,
-    }
-
-    # **저장 실패가 분류 결과를 지우면 안 된다.** 여기까지 오는 데 pro 1콜을
-    # 썼다. 기록은 부가 기능, 답이 본체다.
+    # **착수를 표에 먼저 남긴다.** 이 함수에서 제일 중요한 자리다.
+    #
+    # 끝날 때 한 번만 쓰면 **끝까지 못 간 건이 표에 아예 안 남는다.**
+    # 사용자가 처리 중에 탭을 닫으면 Starlette 은 응답 제너레이터를 close()
+    # 하지 않고 그냥 버린다(starlette 1.3.1 에서 실측). 그러면 GeneratorExit
+    # 도 finally 도 오지 않아서 **정리 코드를 걸 자리 자체가 없다.**
+    # 시작할 때 남기는 것 말고는 방법이 없다.
+    #
+    # 남아 있는 `오류='진행중'` 행이 곧 중도 이탈 건수다. 로그를 눈으로 훑던
+    # 판정("착수만 있고 완료가 없으면 처리 중에 죽은 것")이 SELECT 한 줄이 된다.
+    #
+    # /api/dropped 로는 못 메운다. 그건 화면이 살아 있어야 보내는 것이라
+    # 탭을 닫으면 보고하는 코드 자체가 안 돈다(web/src/App.tsx 의 catch).
     run_id = 저장실패 = None
     try:
-        run_id = storage.save_run(기록)
+        run_id = storage.save_run(기록만들기("진행중"))
     except Exception as e:
         저장실패 = type(e).__name__
-        print(f"[저장] 실패 — {저장실패}", flush=True)
+        print(f"[저장] 착수 실패 — {저장실패}", flush=True)
 
-    print(f"[분류] 완료 세션={req.세션id[:8]} {기록['elapsed']}초 "
-          f"→ {기록['최종10자리'] or '실패'} (run_id={run_id})", flush=True)
+    # **세션id 는 앞 8자만 찍는다.** 로그로 사람을 되짚을 이유가 없고,
+    # 같은 브라우저인지 가리는 데는 8자면 충분하다.
+    print(f"[분류] 착수 세션={req.세션id[:8]} 글자수={len(desc)} "
+          f"(run_id={run_id})", flush=True)
 
-    yield ("결과", ClassifyOut(
-        run_id=run_id,
-        저장실패=저장실패,
-        오류="분류에 실패했습니다. 잠시 후 다시 시도해 주세요." if 오류 else None,
-        코드=기록["최종10자리"],
-        순위=순위,
-        ranked=[RankedOut(**r) for r in ranked if isinstance(r, dict)],
-        확신도=기록["확신도"],
-        확인포인트=기록["확인포인트"],
-        확정근거=기록["확정근거"],
-        확정확신도=기록["확정확신도"],
-        확정확인포인트=d4.get("check_points", []),
-        top근거=ranked[0].get("reason") if ranked else None,
-        top결정례=ranked[0].get("근거결정례") if ranked else None,
-        결정례=[
-            결정례Out(참조번호=h["참조번호"], score=h["score"], 품명=h["품명"],
-                    결정세번=h["결정세번"], 물품설명=h["물품설명"][:400])
-            for h in hits
-        ],
-        선택지수=기록["선택지수"],
-        자동확정=기록["자동확정"],
-        elapsed=기록["elapsed"],
-        남은횟수=max(0, 세션_분류_상한 - 세션_분류횟수(req.세션id)),
-    ))
+    def 남기기(오류):
+        """착수 때 넣어 둔 행을 결과로 채우고 (기록, run_id, 저장실패) 를 준다.
+
+        **저장 실패가 분류 결과를 지우면 안 된다.** 여기까지 오는 데 pro 1콜을
+        썼다. 기록은 부가 기능이고 답이 본체다. 그래서 착수 저장이 실패해
+        고칠 행이 없으면 여기서 새로 넣어 본다 — 고치기 전과 같은 동작이다.
+
+        `시각` 을 안 넘기므로 update_run 이 그 열을 건드리지 않는다. 표에 남는
+        시각은 **착수 시각**이고, 걸린 시간은 elapsed 에 따로 있다.
+        """
+        기록 = 기록만들기(오류)
+        try:
+            if run_id is not None:
+                storage.update_run(run_id, 기록)
+                return 기록, run_id, 저장실패
+            return 기록, storage.save_run(기록), None
+        except Exception as e:
+            print(f"[저장] 실패 — {type(e).__name__}", flush=True)
+            return 기록, run_id, type(e).__name__
+
+    # **try 가 두 겹이다.** 안쪽은 [1]~[4] 의 실패를 잡고, 바깥쪽은 이 함수가
+    # 어떤 이유로 끝나든 마지막에 한 번 돌 자리를 만든다. 한 겹으로 합칠 수
+    # 없는 이유는 finally 가 except 직후에 돌아 버려서, 그 아래 저장 코드가
+    # 아직 안 돈 시점에 "중단"으로 판정하기 때문이다.
+    try:
+        try:
+            yield 단계(1, "6자리 후보 3개를 뽑는 중", "시작")
+            # use_cache=False — 앱이 만든 항목이 측정용 후보 캐시에 섞이지 않게 한다.
+            first = pipeline.generate_candidates(
+                desc, model=config.MODEL_DEV, use_cache=False)
+            후보 = first["candidates"]
+            if not 후보:
+                raise RuntimeError("후보를 만들지 못했습니다")
+            마지막 = 1
+            yield 단계(1, "6자리 후보 3개를 뽑는 중", "완료", first.get("elapsed"))
+
+            yield 단계(2, "비슷한 과거 결정례를 찾는 중", "시작")
+            t = time.time()
+            hits = search.search(desc, top_k=5, index=자원["인덱스"])
+            마지막 = 2
+            yield 단계(2, "비슷한 과거 결정례를 찾는 중", "완료", time.time() - t)
+
+            yield 단계(3, "결정례를 근거로 순위를 다시 판단하는 중", "시작")
+            third = pipeline.rerank(desc, 후보, hits, model=config.MODEL_MAIN)
+            # 재정렬이 깨졌으면 1차 순서를 그대로 쓴다. 한 단계가 실패해도 답은 낸다.
+            순위 = third["codes"] or [c["code"] for c in 후보]
+            ranked = (third.get("data") or {}).get("ranked", [])
+            마지막 = 3
+            yield 단계(3, "결정례를 근거로 순위를 다시 판단하는 중", "완료",
+                      third.get("elapsed"))
+
+            yield 단계(4, "10자리 세번을 고르는 중", "시작")
+            fourth = pipeline.finalize(desc, 순위[0], table=자원["세번표"],
+                                       model=config.MODEL_DEV)
+            마지막 = 4
+            yield 단계(4, "10자리 세번을 고르는 중", "완료", fourth.get("elapsed"))
+        except Exception as e:
+            # 원인 문자열은 DB 와 로그에만. 화면에는 안내만 간다.
+            오류 = f"{type(e).__name__}: {e}"
+            print(f"[분류] 실패 — {오류}", flush=True)
+            일일_더하기(-1)          # 실패했으면 차감을 되돌린다
+
+        기록, run_id, 저장실패 = 남기기(오류)
+
+        print(f"[분류] 완료 세션={req.세션id[:8]} {기록['elapsed']}초 "
+              f"→ {기록['최종10자리'] or '실패'} (run_id={run_id})", flush=True)
+
+        # **저장한 뒤, yield 하기 전에 세운다.** 뒤로 미루면 아래 yield 에서
+        # 끊겼을 때 finally 가 같은 건을 한 번 더 저장한다.
+        완료 = True
+
+        yield ("결과", ClassifyOut(
+            run_id=run_id,
+            저장실패=저장실패,
+            오류="분류에 실패했습니다. 잠시 후 다시 시도해 주세요." if 오류 else None,
+            코드=기록["최종10자리"],
+            순위=순위,
+            ranked=[RankedOut(**r) for r in ranked if isinstance(r, dict)],
+            확신도=기록["확신도"],
+            확인포인트=기록["확인포인트"],
+            확정근거=기록["확정근거"],
+            확정확신도=기록["확정확신도"],
+            확정확인포인트=((fourth or {}).get("data") or {}).get("check_points", []),
+            top근거=ranked[0].get("reason") if ranked else None,
+            top결정례=ranked[0].get("근거결정례") if ranked else None,
+            결정례=[
+                결정례Out(참조번호=h["참조번호"], score=h["score"], 품명=h["품명"],
+                        결정세번=h["결정세번"], 물품설명=h["물품설명"][:400])
+                for h in hits
+            ],
+            선택지수=기록["선택지수"],
+            자동확정=기록["자동확정"],
+            elapsed=기록["elapsed"],
+            남은횟수=max(0, 세션_분류_상한 - 세션_분류횟수(req.세션id)),
+        ))
+    finally:
+        # **여기는 보조 장치다. 스트림 끊김은 여기로 안 온다.**
+        #
+        # 처음에는 이 자리가 중도 이탈을 잡는 곳이라고 봤는데, 재현해 보니
+        # 아니었다. 탭을 닫아도 GeneratorExit 이 오지 않는다 — Starlette 은
+        # 제너레이터를 close() 하지 않고 그냥 버려서, 60초를 기다려도 이
+        # finally 가 안 돌았다(starlette 1.3.1). 그건 위에서 착수 행을 먼저
+        # 넣는 것으로 잡는다.
+        #
+        # 그래도 남겨 두는 이유 — 제너레이터가 **실제로 닫히는** 경우가 있다.
+        # 비스트림 /api/classify, 워커 종료, 소비하는 쪽의 예기치 못한 예외다.
+        # 그때는 '진행중' 을 단계 번호까지 붙여 고쳐 주니 정보가 더 많다.
+        #
+        # **차감은 되돌리지 않는다.** 3단계까지 갔으면 pro 호출은 이미 나갔고
+        # 250 req/day 는 진짜로 줄었다. 여기서 환불하면 "시작 → 3단계 → 끊기
+        # → 환불" 을 반복해 일일 상한을 무한히 우회할 수 있다.
+        #
+        # **여기서 yield 하면 안 된다.** GeneratorExit 처리 중에 yield 하면
+        # RuntimeError: generator ignored GeneratorExit 가 난다.
+        if not 완료:
+            print(f"[분류] 미완료 세션={req.세션id[:8]} 단계={마지막}", flush=True)
+            try:
+                남기기(f"중단(단계{마지막})")
+            except Exception as e:
+                # 중단을 남기다 또 터지면 원래 끊김을 덮는다. 로그만 남기고 삼킨다.
+                print(f"[분류] 미완료 기록 실패 — {type(e).__name__}", flush=True)
 
 
 def _착수_검사(req):

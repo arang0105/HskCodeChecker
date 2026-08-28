@@ -308,6 +308,41 @@ def save_run(row, path=None):
         return cur.lastrowid
 
 
+def update_run(run_id, row, path=None):
+    """이미 넣어 둔 행을 나중 값으로 채운다. 고친 행 수를 돌려준다.
+
+    **왜 필요한가** — 분류는 착수할 때 `오류='진행중'` 인 행을 **먼저** 넣고,
+    끝나면 이 함수로 결과를 덮어쓴다. 끝날 때 한 번만 쓰면 **끝까지 못 간 건이
+    표에 아예 안 남는다.** 사용자가 처리 중에 탭을 닫으면 Starlette 은 응답
+    제너레이터를 close() 하지 않고 그냥 버리는데(starlette 1.3.1 에서 확인),
+    그러면 finally 도 GeneratorExit 도 오지 않아 정리 코드를 걸 자리가 없다.
+    시작할 때 남기는 것 말고는 방법이 없다.
+
+    남은 '진행중' 행이 곧 이탈 건수다.
+
+    **row 에 있는 키만 고친다.** 없는 키를 NULL 로 넣는 save_run 과 반대인데,
+    같은 규칙을 쓰면 착수 때 찍힌 `시각` 이 지워지고 나중에 눌린 👍/👎
+    (`평가`·`평가메모`)까지 날아간다.
+
+    **열 이름은 COLUMNS 에 있는 것만 쓴다.** SQL 에서 열 이름 자리에는
+    자리표시자(?)를 못 쓴다 — 문자열로 이어 붙일 수밖에 없다. row 의 키를
+    그대로 붙이면 그 자리가 SQL 인젝션 통로가 되므로, 아래 교집합이 그걸
+    막는 유일한 장치다. 값 쪽은 save_run 과 똑같이 자리표시자를 쓴다.
+    """
+    이름들 = [이름 for 이름, _ in COLUMNS if 이름 in row]
+    if not 이름들:
+        return 0
+
+    conn, pg = _connect(path)
+    q = _ph(pg)
+    설정 = ", ".join(f"{이름} = {q}" for 이름 in 이름들)
+    값들 = [_to_db(이름, row[이름]) for 이름 in 이름들] + [run_id]
+
+    with closing(conn) as conn, conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE runs SET {설정} WHERE id = {q}", 값들)
+        return cur.rowcount
+
 def save_feedback(run_id, 평가, 메모=None, path=None, 세션id=None):
     """나중에 눌린 👍/👎 를 그 행에 채운다. 고친 행 수를 돌려준다.
 
