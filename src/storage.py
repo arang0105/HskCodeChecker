@@ -340,17 +340,28 @@ def save_feedback(run_id, 평가, 메모=None, path=None, 세션id=None):
         return cur.rowcount
 
 
-def daily_count(날짜, path=None):
-    """그 날짜에 몇 건 썼는지 돌려준다. 행이 없으면 0 이다.
+def daily_count(키, path=None):
+    """그 키의 카운터를 돌려준다. 행이 없으면 0 이다.
 
-    날짜는 '2026-08-21' 같은 문자열이다. 부르는 쪽에서
-    datetime.now(config.KST).date().isoformat() 으로 넘긴다 — **KST 기준**이다.
-    서버 시각(배포 컨테이너는 UTC)을 쓰면 상한이 한국 시각 오전 9시에 리셋된다.
+    **키는 날짜만이 아니다.** 두 모양이 있다.
+
+        '2026-08-28'        분류 (처음부터 있던 것)
+        '끊김:2026-08-28'    항목이 앞에 붙은 것 — 끊김·추출·게이트
+
+    counters 의 열 이름이 '날짜'인 것은 **처음에 날짜만 담았기 때문이다.**
+    2026-08-28 에 카운터가 4종으로 늘면서 '항목:날짜' 를 키로 쓰게 됐다.
+    열 이름을 안 바꾼 이유는 그게 배포된 Postgres 의 ALTER TABLE 이고,
+    아래 daily_add 가 UPSERT 를 피한 것과 **같은 이유**로 방언이 갈리기
+    때문이다. 확인할 수 없는 쪽에서 틀리면 상한이 통째로 안 걸린다.
+    대신 인자 이름을 '키' 로 두어 읽는 사람이 속지 않게 한다.
+
+    날짜 부분은 부르는 쪽이 KST 기준으로 만든다 — 서버 시각(배포 컨테이너는
+    UTC)을 쓰면 상한이 한국 시각 오전 9시에 리셋된다.
     """
     conn, pg = _connect(path)
     with closing(conn) as conn, conn:
         cur = conn.cursor()
-        cur.execute(f"SELECT 횟수 FROM counters WHERE 날짜 = {_ph(pg)}", (날짜,))
+        cur.execute(f"SELECT 횟수 FROM counters WHERE 날짜 = {_ph(pg)}", (키,))
         행 = cur.fetchone()
     # max(0, ...) 는 방어다. daily_add 가 음수로 되돌릴 때 0 아래로 내려가는 것을
     # 파이썬 쪽에서 막는다. SQL 로 막으려면 SQLite 는 max(), Postgres 는
@@ -358,8 +369,10 @@ def daily_count(날짜, path=None):
     return max(0, 행["횟수"] if 행 else 0)
 
 
-def daily_add(날짜, delta, path=None):
-    """그 날짜의 사용량을 delta 만큼 바꾸고 새 값을 돌려준다.
+def daily_add(키, delta, path=None):
+    """그 키의 카운터를 delta 만큼 바꾸고 새 값을 돌려준다.
+
+    키의 모양은 daily_count 주석을 보라 — 날짜만이 아니다.
 
     delta 는 +1 로 미리 깎고, 실패하면 -1 로 되돌리는 데 쓴다.
     호출을 **하기 전에** 깎는 게 중요하다 — 30~60초 걸리는 분류가 도는
@@ -375,19 +388,19 @@ def daily_add(날짜, delta, path=None):
     q = _ph(pg)
     with closing(conn) as conn, conn:
         cur = conn.cursor()
-        cur.execute(f"SELECT 횟수 FROM counters WHERE 날짜 = {q}", (날짜,))
+        cur.execute(f"SELECT 횟수 FROM counters WHERE 날짜 = {q}", (키,))
         행 = cur.fetchone()
         if 행 is None:
             새값 = max(0, delta)
             cur.execute(
                 f"INSERT INTO counters (날짜, 횟수) VALUES ({q}, {q})",
-                (날짜, 새값),
+                (키, 새값),
             )
         else:
             새값 = max(0, 행["횟수"] + delta)
             cur.execute(
                 f"UPDATE counters SET 횟수 = {q} WHERE 날짜 = {q}",
-                (새값, 날짜),
+                (새값, 키),
             )
     return 새값
 
