@@ -1,0 +1,68 @@
+# 푸시할 때 도는 검사. **LLM 을 한 번도 부르지 않는다.**
+#
+# CLAUDE.md 의 「Docker / CI/CD 금지」는 뒤에 이유가 "배포는 호스팅 대시보드
+# 설정으로 끝낸다" 라고 붙어 있다. 배포 파이프라인을 만들지 말라는 뜻이고,
+# 여기서 하는 것은 배포가 아니라 검사다. 배포는 여전히 Render 대시보드가 한다.
+#
+# **회귀셋 20건을 돌리지 않는다.** 그건 1회당 pro 20콜이고, 그 250 req/day 는
+# 10월 13일에 보여줄 URL 이 쓰는 바로 그 한도다. 하루 세 번 푸시하면 링크를
+# 받은 사람이 429 를 본다. 게이트가 데모를 죽인다. 게다가 Temperature 1 에서
+# 20건은 코드와 무관하게 1~2건이 흔들려서(일관성 실측 6자리 90% / 10자리 60%)
+# 임계를 좁히면 멀쩡한 커밋을 막고 넓히면 영영 안 울린다.
+#
+# 그래서 이걸 "회귀 게이트" 라고 부르지 않는다. 안 한 일이다.
+
+name: check
+
+on: [push, pull_request]
+
+jobs:
+  py:
+    runs-on: ubuntu-latest
+    env:
+      # **진짜 키가 아니다. secret 도 아니다.**
+      # src/config.py 가 GEMINI_API_KEY 없으면 RuntimeError 로 죽어서 import
+      # 부터 막히는데, 그 검사는 .env 누락을 즉시 잡아 주는 장치라 없애고
+      # 싶지 않다. genai.configure() 는 값을 저장만 하고 검증하지 않고
+      # 아래 단계는 API 를 한 번도 부르지 않으므로, 가짜 문자열이면 충분하다.
+      # 가짜인 게 이름만 봐도 보이게 지었다.
+      GEMINI_API_KEY: not-a-real-key-ci-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"        # 로컬과 같은 버전
+          cache: pip
+
+      # Render 가 설치하는 것과 **같은 파일**을 쓴다. 여기서 갈리면
+      # 이 검사가 배포 깨짐을 못 잡는다.
+      - run: pip install -r api/requirements.txt
+
+      # 배포에서만 나던 ImportError 를 푸시 시점으로 당긴다.
+      # (python-multipart 를 빠뜨려 배포에서 500 이 났던 적이 있다)
+      - run: python -c "import api.main; print('api.main import OK')"
+
+      - run: python -m src.checks
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+
+      # **types.ts 와 pydantic 이 어긋나는 것을 잡는 자리다.**
+      # 둘을 손으로 맞추기로 했으므로(CLAUDE.md — OpenAPI 자동 생성 금지)
+      # 어긋남을 잡아 주는 게 여기밖에 없다.
+      - run: npx tsc -b --force
+
+      # 경고로는 안 막는다. 지금 App.tsx:136 에 의도한 경고가 하나 있고,
+      # 그건 주석으로 이유를 적어 둔 코드다.
+      - run: npx oxlint
