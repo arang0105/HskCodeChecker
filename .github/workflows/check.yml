@@ -28,8 +28,8 @@ jobs:
       # 가짜인 게 이름만 봐도 보이게 지었다.
       GEMINI_API_KEY: not-a-real-key-ci-only
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"        # 로컬과 같은 버전
           cache: pip
@@ -50,8 +50,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
